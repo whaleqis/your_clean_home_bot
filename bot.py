@@ -575,15 +575,15 @@ async def finish_lead(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
 
     lead = (
-        "🆕 Your Clean Home — ՆՈՐ ՀԱՅՏ\\n\\n"
-        f"👤 Անուն՝ {data.get('name', '—')}\\n"
-        f"📞 Հեռախոս՝ {data.get('phone', '—')}\\n"
-        f"🧹 Ծառայություն՝ {data.get('service', 'չի նշվել')}\\n"
-        f"📐 Մակերես / ժամեր՝ {data.get('area', 'չի նշվել')}\\n"
+        "🆕 Your Clean Home — ՆՈՐ ՀԱՅՏ\n\n"
+        f"👤 Անուն՝ {data.get('name', '—')}\n"
+        f"📞 Հեռախոս՝ {data.get('phone', '—')}\n"
+        f"🧹 Ծառայություն՝ {data.get('service', 'չի նշվել')}\n"
+        f"📐 Մակերես / ժամեր՝ {data.get('area', 'չի նշվել')}\n"
         f"💰 Մոտավոր արժեք՝ "
-        f"{money(data['estimate']) if data.get('estimate') is not None else 'չի հաշվարկվել'}\\n"
-        f"📍 Հասցե՝ {data.get('address', '—')}\\n"
-        f"🕒 Կապի հարմար ժամ՝ {data.get('contact_time', '—')}\\n"
+        f"{money(data['estimate']) if data.get('estimate') is not None else 'չի հաշվարկվել'}\n"
+        f"📍 Հասցե՝ {data.get('address', '—')}\n"
+        f"🕒 Կապի հարմար ժամ՝ {data.get('contact_time', '—')}\n"
         f"🆔 Telegram ID՝ {user.id if user else '—'}"
     )
 
