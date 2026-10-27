@@ -15,7 +15,7 @@ OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID", "").strip()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-LANG, MENU, SERVICE, AREA, HOURS, NAME, PHONE, ADDRESS, CONTACT_TIME, CONTACT_HOUR = range(10)
+LANG, MENU, SERVICE, AREA, HOURS, NAME, PHONE, ADDRESS, CONTACT_TIME, SERVICE_INFO = range(10)
 
 LANGS = {
     "hy": {"name": "🇦🇲 Հայերեն", "welcome": "Ընտրեք լեզուն։"},
@@ -67,7 +67,6 @@ T = {
     "bad_address": "Խնդրում եմ նշեք հասցեն կամ թաղամասը, կամ գրեք «Կճշտեմ»։",
     "time_prompt": "📞 Ո՞ր ժամային միջակայքում է հարմար, որ կապ հաստատենք։",
     "time_any": "🕒 Ցանկացած ժամ", "time_choose": "Ընտրեք կապի հարմար ժամային միջակայքը կոճակներից։",
-    "time_selected": "Ընտրել եք՝ {interval}։ Ո՞ր ժամն է Ձեզ հարմար։", "exact_time": "Ընտրեք կոնկրետ ժամը կոճակներից։",
     "thanks": "Շնորհակալություն, Ձեր հայտը ստացանք։ 💚\nՄեր թիմը կապ կհաստատի Ձեզ հետ՝ մանրամասները ճշտելու և վերջնական արժեքը ներկայացնելու համար։\nԿարող եք նաև զանգահարել՝ 041 10 11 43։",
     "send_error": "Հայտը ուղարկելիս խնդիր առաջացավ։ Խնդրում ենք զանգահարել՝ 041 10 11 43։",
     "call_text": "📞 Զանգահարեք մեզ՝ 041 10 11 43։\n\nՍիրով կպատասխանենք Ձեր հարցերին։",
@@ -119,7 +118,6 @@ T = {
     "bad_address": "Пожалуйста, укажите адрес или район либо напишите «Уточню».",
     "time_prompt": "📞 В какой промежуток времени вам удобно, чтобы мы связались?",
     "time_any": "🕒 В любое время", "time_choose": "Выберите удобный интервал для звонка с помощью кнопок.",
-    "time_selected": "Вы выбрали: {interval}. Какое конкретно время вам удобно?", "exact_time": "Выберите конкретное время с помощью кнопок.",
     "thanks": "Спасибо! Мы получили вашу заявку. 💚\nНаша команда свяжется с вами, чтобы уточнить детали и сообщить окончательную стоимость.\nТакже можно позвонить: 041 10 11 43.",
     "send_error": "Не удалось отправить заявку. Пожалуйста, позвоните: 041 10 11 43.",
     "call_text": "📞 Позвоните нам: 041 10 11 43.\n\nБудем рады ответить на ваши вопросы.",
@@ -171,7 +169,6 @@ T = {
     "bad_address": "Please enter your address or neighbourhood, or type “I’ll confirm”.",
     "time_prompt": "📞 What time window is convenient for us to contact you?",
     "time_any": "🕒 Any time", "time_choose": "Choose a convenient time window using the buttons.",
-    "time_selected": "You selected: {interval}. Which exact time works for you?", "exact_time": "Choose an exact time using the buttons.",
     "thanks": "Thank you! We’ve received your request. 💚\nOur team will contact you to confirm the details and provide the final price.\nYou can also call 041 10 11 43.",
     "send_error": "There was a problem submitting your request. Please call 041 10 11 43.",
     "call_text": "📞 Call us: 041 10 11 43.\n\nWe’ll be happy to answer your questions.",
@@ -185,6 +182,33 @@ T = {
 }
 }
 
+SERVICE_DETAILS = {
+    "hy": {
+        "regular": "🏠 Ընթացիկ մաքրում\n\nՏան պարբերական մաքրություն՝ մաքրությունը պահպանելու և առօրյա փոշին ու կեղտը հեռացնելու համար։ Հարմար է բնակարանի կանոնավոր խնամքի համար։\n\n💰 Արժեքը՝ 350 դրամ/քմ, նվազագույնը՝ 14 000 դրամ։",
+        "deep": "✨ Համալիր մաքրում\n\nԱվելի մանրակրկիտ մաքրություն՝ տան տարբեր հատվածներում կուտակված փոշին ու կեղտը հեռացնելու համար։ Հարմար է պարբերական խորքային մաքրման կամ հատուկ առիթներից առաջ։\n\n💰 Արժեքը՝ 650 դրամ/քմ, նվազագույնը՝ 26 000 դրամ։",
+        "post": "🛠 Հետշինարարական մաքրում\n\nՄաքրություն վերանորոգումից կամ շինարարական աշխատանքներից հետո՝ շինարարական փոշին և մնացորդային կեղտը հեռացնելու համար։\n\n💰 Արժեքը՝ 800 դրամ/քմ, նվազագույնը՝ 32 000 դրամ։",
+        "steam": "♨️ Գոլորշիով մաքրում\n\nԳոլորշու միջոցով մաքրում՝ միայն գոլորշու ազդեցությանը համապատասխան մակերեսների համար։ Մակերեսի համապատասխանությունը նախապես ճշտվում է։\n\n💰 Արժեքը կախված է մակերեսից և աշխատանքի ծավալից։",
+        "dry": "🛋 Քիմմաքրում\n\nՓափուկ կահույքի և ներքնակների մասնագիտական մաքրում։ Ստորև ներկայացված են հիմնական գները։",
+        "ironing": "👔 Արդուկում\n\nՀագուստի արդուկման ծառայություն՝ ըստ անհրաժեշտ ժամերի քանակի։\n\n💰 Արժեքը՝ 4 000 դրամ/ժամ։",
+    },
+    "ru": {
+        "regular": "🏠 Регулярная уборка\n\nПериодическая уборка дома для поддержания чистоты и удаления повседневной пыли и загрязнений. Подходит для регулярного ухода за квартирой.\n\n💰 Стоимость: 350 драм/м², минимум — 14 000 драм.",
+        "deep": "✨ Генеральная уборка\n\nБолее тщательная уборка для удаления накопившейся пыли и загрязнений в разных зонах дома. Подходит для периодической глубокой уборки или перед важными событиями.\n\n💰 Стоимость: 650 драм/м², минимум — 26 000 драм.",
+        "post": "🛠 Уборка после ремонта\n\nУборка после ремонта или строительных работ для удаления строительной пыли и оставшихся загрязнений.\n\n💰 Стоимость: 800 драм/м², минимум — 32 000 драм.",
+        "steam": "♨️ Паровая уборка\n\nОчистка паром поверхностей, которые подходят для такого способа обработки. Совместимость поверхности необходимо уточнить заранее.\n\n💰 Стоимость зависит от площади и объёма работ.",
+        "dry": "🛋 Химчистка\n\nПрофессиональная чистка мягкой мебели и матрасов. Ниже указаны основные цены.",
+        "ironing": "👔 Глажка\n\nУслуга глажки одежды с оплатой по количеству необходимых часов.\n\n💰 Стоимость: 4 000 драм/час.",
+    },
+    "en": {
+        "regular": "🏠 Regular cleaning\n\nRoutine home cleaning to maintain cleanliness and remove everyday dust and dirt. Suitable for regular home upkeep.\n\n💰 Price: AMD 350/m², minimum charge: AMD 14,000.",
+        "deep": "✨ Deep cleaning\n\nA more thorough clean to remove accumulated dust and dirt throughout the home. Suitable for periodic deep cleaning or before a special occasion.\n\n💰 Price: AMD 650/m², minimum charge: AMD 26,000.",
+        "post": "🛠 Post-construction cleaning\n\nCleaning after renovation or construction work to remove construction dust and leftover dirt.\n\n💰 Price: AMD 800/m², minimum charge: AMD 32,000.",
+        "steam": "♨️ Steam cleaning\n\nSteam cleaning for surfaces suitable for this method. Surface compatibility should be checked in advance.\n\n💰 Price depends on the area and scope of work.",
+        "dry": "🛋 Upholstery and mattress cleaning\n\nProfessional cleaning for upholstered furniture and mattresses. Main prices are listed below.",
+        "ironing": "👔 Ironing\n\nClothing ironing charged by the number of hours required.\n\n💰 Price: AMD 4,000/hour.",
+    },
+}
+
 SERVICE_EXTRAS_KEY = {"regular": "extras_regular", "deep": "extras_deep", "post": "extras_post", "steam": "extras_steam", "dry": "extras_dry", "ironing": "extras_ironing"}
 SERVICE_PRICES = {
     "regular": ("regular", 350, 14000),
@@ -192,12 +216,6 @@ SERVICE_PRICES = {
     "post": ("post", 800, 32000),
 }
 
-TIME_HOURS = {
-    "🌅 09:00–12:00": ["09:00", "10:00", "11:00"],
-    "☀️ 12:00–15:00": ["12:00", "13:00", "14:00"],
-    "🌤️ 15:00–18:00": ["15:00", "16:00", "17:00"],
-    "🌙 18:00–21:00": ["18:00", "19:00", "20:00"],
-}
 
 def lang(context):
     return context.user_data.get("lang", "hy")
@@ -233,6 +251,14 @@ def service_keyboard(context):
     t = T[lang(context)]
     return ReplyKeyboardMarkup([[names[0], names[1]], [names[2]], [names[3], names[4]], [names[5]], [t["main"]]], resize_keyboard=True)
 
+def services_browser_keyboard(context):
+    t = T[lang(context)]
+    names = t["service_names"]
+    return ReplyKeyboardMarkup(
+        [[names[0], names[1]], [names[2], names[3]], [names[4], names[5]], [t["main"]]],
+        resize_keyboard=True,
+    )
+
 def step_keyboard(context):
     t = T[lang(context)]
     return ReplyKeyboardMarkup([[t["back"]], [t["main"]]], resize_keyboard=True)
@@ -256,12 +282,6 @@ def hours_keyboard(context):
 def time_keyboard(context):
     t = T[lang(context)]
     return ReplyKeyboardMarkup([[t["time_intervals"][0], t["time_intervals"][1]], [t["time_intervals"][2], t["time_intervals"][3]], [t["time_any"]], [t["back"]], [t["main"]]], resize_keyboard=True)
-
-def exact_time_keyboard(context, interval):
-    t = T[lang(context)]
-    rows = [TIME_HOURS[interval][i:i+2] for i in range(0, 3, 2)]
-    rows.extend([[t["back"]], [t["main"]]])
-    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 def calc(sid, area=None, hours=None):
     if sid in SERVICE_PRICES:
@@ -294,8 +314,45 @@ async def change_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return LANG
 
 async def show_services(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.effective_message.reply_text(tr(context, "services_title") + "\n\n" + tr(context, "service_desc"), reply_markup=main_keyboard(context))
-    return MENU
+    t = T[lang(context)]
+    prompt = {
+        "hy": "Ընտրեք ծառայությունը՝ մանրամասն նկարագրությունը տեսնելու համար։",
+        "ru": "Выберите услугу, чтобы посмотреть подробное описание.",
+        "en": "Choose a service to view its detailed description.",
+    }[lang(context)]
+    await update.effective_message.reply_text(tr(context, "services_title") + "\n\n" + prompt, reply_markup=services_browser_keyboard(context))
+    return SERVICE_INFO
+
+async def show_service_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.effective_message.text.strip()
+    t = T[lang(context)]
+    if text == t["main"]:
+        return await start(update, context)
+    sid = service_id(context, text)
+    if not sid:
+        prompt = {
+            "hy": "Ընտրեք ծառայություններից մեկը կոճակներով։",
+            "ru": "Пожалуйста, выберите одну из услуг с помощью кнопок.",
+            "en": "Please choose one of the services using the buttons.",
+        }[lang(context)]
+        await update.effective_message.reply_text(prompt, reply_markup=services_browser_keyboard(context))
+        return SERVICE_INFO
+
+    detail = SERVICE_DETAILS[lang(context)][sid]
+    extras_key = SERVICE_EXTRAS_KEY.get(sid)
+    if sid == "dry":
+        detail += "\n\n" + tr(context, "extras_dry") + "\n\n" + tr(context, "dry_more")
+    elif sid == "ironing":
+        detail += "\n\n" + tr(context, "extras_ironing")
+    elif extras_key:
+        detail += "\n\n" + tr(context, "extras_title") + "\n" + tr(context, extras_key)
+    prompt = {
+        "hy": "\n\nԸնտրեք մեկ այլ ծառայություն կամ վերադարձեք գլխավոր մենյու։",
+        "ru": "\n\nВыберите другую услугу или вернитесь в главное меню.",
+        "en": "\n\nChoose another service or return to the main menu.",
+    }[lang(context)]
+    await update.effective_message.reply_text(detail + prompt, reply_markup=services_browser_keyboard(context))
+    return SERVICE_INFO
 
 async def choose_estimate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["flow"] = "estimate"
@@ -457,26 +514,8 @@ async def enter_contact_time(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if text not in t["time_intervals"]:
         await update.effective_message.reply_text(tr(context, "time_choose"), reply_markup=time_keyboard(context))
         return CONTACT_TIME
-    # The labels are the same in all three languages; map by position for robust lookup.
-    idx = t["time_intervals"].index(text)
-    interval = list(TIME_HOURS.keys())[idx]
-    context.user_data["contact_interval"] = interval
-    await update.effective_message.reply_text(tr(context, "time_selected", interval=text), reply_markup=exact_time_keyboard(context, interval))
-    return CONTACT_HOUR
-
-async def enter_contact_hour(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.effective_message.text.strip()
-    t = T[lang(context)]
-    if text == t["main"]:
-        return await start(update, context)
-    if text == t["back"]:
-        await update.effective_message.reply_text(tr(context, "time_prompt"), reply_markup=time_keyboard(context))
-        return CONTACT_TIME
-    interval = context.user_data.get("contact_interval")
-    if interval not in TIME_HOURS or text not in TIME_HOURS[interval]:
-        await update.effective_message.reply_text(tr(context, "exact_time"), reply_markup=exact_time_keyboard(context, interval))
-        return CONTACT_HOUR
-    context.user_data["contact_time"] = f"{text} ({interval})"
+    # Save only the selected time window; do not ask for an exact hour.
+    context.user_data["contact_time"] = text
     return await finish_lead(update, context)
 
 async def finish_lead(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -536,13 +575,13 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_menu),
             ],
             SERVICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, choose_service)],
+            SERVICE_INFO: [MessageHandler(filters.TEXT & ~filters.COMMAND, show_service_details)],
             AREA: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_area)],
             HOURS: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_hours)],
             NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_name)],
             PHONE: [MessageHandler(filters.CONTACT, receive_contact), MessageHandler(filters.TEXT & ~filters.COMMAND, enter_phone)],
             ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_address)],
             CONTACT_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_contact_time)],
-            CONTACT_HOUR: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_contact_hour)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
