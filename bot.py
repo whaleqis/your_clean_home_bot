@@ -3,10 +3,10 @@ import re
 import logging
 
 from dotenv import load_dotenv
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, ConversationHandler,
-    ContextTypes, filters,
+    ContextTypes, filters, CallbackQueryHandler,
 )
 
 load_dotenv()
@@ -252,12 +252,16 @@ def service_keyboard(context):
     return ReplyKeyboardMarkup([[names[0], names[1]], [names[2]], [names[3], names[4]], [names[5]], [t["main"]]], resize_keyboard=True)
 
 def services_browser_keyboard(context):
+    """Inline buttons stay attached to the message after a user taps one."""
     t = T[lang(context)]
     names = t["service_names"]
-    return ReplyKeyboardMarkup(
-        [[names[0], names[1]], [names[2], names[3]], [names[4], names[5]], [t["main"]]],
-        resize_keyboard=True,
-    )
+    rows = [
+        [InlineKeyboardButton(names[0], callback_data="svc:regular"), InlineKeyboardButton(names[1], callback_data="svc:deep")],
+        [InlineKeyboardButton(names[2], callback_data="svc:post"), InlineKeyboardButton(names[3], callback_data="svc:steam")],
+        [InlineKeyboardButton(names[4], callback_data="svc:dry"), InlineKeyboardButton(names[5], callback_data="svc:ironing")],
+        [InlineKeyboardButton(t["main"], callback_data="svc:main")],
+    ]
+    return InlineKeyboardMarkup(rows)
 
 def step_keyboard(context):
     t = T[lang(context)]
@@ -324,20 +328,20 @@ async def show_services(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return SERVICE_INFO
 
 async def show_service_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.effective_message.text.strip()
+    query = update.callback_query
+    await query.answer()
+    action = query.data.split(":", 1)[1] if query.data and ":" in query.data else ""
     t = T[lang(context)]
-    if text == t["main"]:
-        return await start(update, context)
-    sid = service_id(context, text)
-    if not sid:
-        prompt = {
-            "hy": "Ընտրեք ծառայություններից մեկը կոճակներով։",
-            "ru": "Пожалуйста, выберите одну из услуг с помощью кнопок.",
-            "en": "Please choose one of the services using the buttons.",
-        }[lang(context)]
-        await update.effective_message.reply_text(prompt, reply_markup=services_browser_keyboard(context))
+
+    if action == "main":
+        await query.message.reply_text(tr(context, "welcome"), reply_markup=main_keyboard(context))
+        return MENU
+
+    if action not in SERVICE_IDS:
+        await query.message.reply_text(tr(context, "unknown"), reply_markup=services_browser_keyboard(context))
         return SERVICE_INFO
 
+    sid = action
     detail = SERVICE_DETAILS[lang(context)][sid]
     extras_key = SERVICE_EXTRAS_KEY.get(sid)
     if sid == "dry":
@@ -347,11 +351,11 @@ async def show_service_details(update: Update, context: ContextTypes.DEFAULT_TYP
     elif extras_key:
         detail += "\n\n" + tr(context, "extras_title") + "\n" + tr(context, extras_key)
     prompt = {
-        "hy": "\n\nԸնտրեք մեկ այլ ծառայություն կամ վերադարձեք գլխավոր մենյու։",
-        "ru": "\n\nВыберите другую услугу или вернитесь в главное меню.",
-        "en": "\n\nChoose another service or return to the main menu.",
+        "hy": "\n\nՍտորև կոճակներով կարող եք ընտրել այլ ծառայություն։ Կոճակները կմնան հասանելի։",
+        "ru": "\n\nНиже можно выбрать другую услугу. Кнопки останутся доступными.",
+        "en": "\n\nUse the buttons below to view another service. The buttons will remain available.",
     }[lang(context)]
-    await update.effective_message.reply_text(detail + prompt, reply_markup=services_browser_keyboard(context))
+    await query.message.reply_text(detail + prompt, reply_markup=services_browser_keyboard(context))
     return SERVICE_INFO
 
 async def choose_estimate(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -575,7 +579,7 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_menu),
             ],
             SERVICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, choose_service)],
-            SERVICE_INFO: [MessageHandler(filters.TEXT & ~filters.COMMAND, show_service_details)],
+            SERVICE_INFO: [CallbackQueryHandler(show_service_details, pattern=r"^svc:(regular|deep|post|steam|dry|ironing|main)$"), MessageHandler(filters.TEXT & ~filters.COMMAND, show_services)],
             AREA: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_area)],
             HOURS: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_hours)],
             NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_name)],
