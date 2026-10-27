@@ -602,8 +602,8 @@ async def finish_lead(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning("OWNER_CHAT_ID is missing. Lead:\\n%s", lead)
 
     await update.effective_message.reply_text(
-        "Շնորհակալություն, Ձեր հայտը ստացանք։ 💚\\n\\n"
-        "Մեր թիմը կապ կհաստատի Ձեզ հետ՝ մանրամասները ճշտելու և վերջնական արժեքը ներկայացնելու համար։\\n\\n"
+        "Շնորհակալություն, Ձեր հայտը ստացանք։ 💚\n"
+        "Մեր թիմը կապ կհաստատի Ձեզ հետ՝ մանրամասները ճշտելու և վերջնական արժեքը ներկայացնելու համար։\n"
         "Կարող եք նաև զանգահարել՝ 041 10 11 43։",
         reply_markup=MAIN_KEYBOARD,
     )
@@ -622,7 +622,7 @@ async def call_us(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def unknown_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(
-        "Կներեք, չհասկացա Ձեր հաղորդագրությունը 😊\n\n"
+        "Կներեք, չհասկացա Ձեր հաղորդագրությունը 😊\n"
         "Խնդրում եմ ընտրեք տարբերակներից մեկը ներքևի կոճակներով։",
         reply_markup=MAIN_KEYBOARD,
     )
