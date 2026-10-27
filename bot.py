@@ -529,12 +529,20 @@ async def finish_lead(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sid = data.get("service")
     visible_service = service_name(context, sid) if sid in SERVICE_IDS else "—"
     price = money(data["estimate"], context) if data.get("estimate") is not None else "—"
-    fields = [
-        data.get("name", "—"), data.get("phone", "—"), visible_service,
-        data.get("area", "—"), price, data.get("address", "—"),
-        data.get("contact_time", "—"), str(user.id if user else "—")
-    ]
-    lead = t["admin_title"] + "\n\n" + "\n".join(f"{label}: {value}" for label, value in zip(T["hy"]["admin_fields"], fields))
+    username = f"@{user.username}" if user and user.username else "չկա"
+    # Keep the owner notification in the compact, emoji-labeled format used previously.
+    lead = (
+        f"{t['admin_title']}\n\n"
+        f"👤 Անուն՝ {data.get('name', '—')}\n"
+        f"📞 Հեռախոս՝ {data.get('phone', '—')}\n"
+        f"🧹 Ծառայություն՝ {visible_service}\n"
+        f"📐 Մակերես / ժամեր՝ {data.get('area', '—')}\n"
+        f"💰 Մոտավոր արժեք՝ {price}\n"
+        f"📍 Հասցե՝ {data.get('address', '—')}\n"
+        f"🕒 Կապի հարմար ժամ՝ {data.get('contact_time', '—')}\n"
+        f"💬 Telegram՝ {username}\n"
+        f"🆔 Telegram ID՝ {user.id if user else '—'}"
+    )
     if OWNER_CHAT_ID:
         try:
             await context.bot.send_message(chat_id=OWNER_CHAT_ID, text=lead)
