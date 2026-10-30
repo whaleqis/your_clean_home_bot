@@ -626,13 +626,31 @@ def lead_status_keyboard(request_id):
     return InlineKeyboardMarkup(rows)
 
 
+STATUS_LABELS = {
+    "New": "🆕 New",
+    "Contacted": "📞 Contacted",
+    "Confirmed": "✅ Confirmed",
+    "Completed": "🧹 Completed",
+    "Cancelled": "❌ Cancelled",
+}
+
+
+def status_filter_keyboard():
+    rows = [
+        [InlineKeyboardButton("📋 All", callback_data="orderfilter:All")],
+        [InlineKeyboardButton(STATUS_LABELS["New"], callback_data="orderfilter:New"),
+         InlineKeyboardButton(STATUS_LABELS["Contacted"], callback_data="orderfilter:Contacted")],
+        [InlineKeyboardButton(STATUS_LABELS["Confirmed"], callback_data="orderfilter:Confirmed"),
+         InlineKeyboardButton(STATUS_LABELS["Completed"], callback_data="orderfilter:Completed")],
+        [InlineKeyboardButton(STATUS_LABELS["Cancelled"], callback_data="orderfilter:Cancelled")],
+    ]
+    return InlineKeyboardMarkup(rows)
+
+
 async def update_lead_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-
-    # OWNER_CHAT_ID is a chat ID. For a private owner chat it is normally the owner's user ID.
     owner_id = str(OWNER_CHAT_ID).strip()
-    if not owner_id or str(query.message.chat_id) != owner_id:
+    if not owner_id or not query.message or str(query.message.chat_id) != owner_id:
         await query.answer("Not authorized.", show_alert=True)
         return
 
@@ -642,35 +660,87 @@ async def update_lead_status(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.answer("Invalid status action.", show_alert=True)
         return
 
-    if status not in {"New", "Contacted", "Confirmed", "Completed", "Cancelled"}:
+    if status not in STATUS_LABELS:
         await query.answer("Unknown status.", show_alert=True)
         return
 
-    ok, result = await sheets_action({
-        "action": "update_status",
-        "request_id": request_id,
-        "status": status,
-    })
+    ok, result = await sheets_action({"action": "update_status", "request_id": request_id, "status": status})
     if not ok:
         await query.answer("Could not update Google Sheets.", show_alert=True)
         logger.error("Could not update lead status: %s", result)
         return
 
-    # Keep the original notification text; append/update only the status line.
     original_text = query.message.text or ""
-    lines = [
-        line for line in original_text.splitlines()
-        if not line.startswith("📌 Status:")
-    ]
-    lines.append(f"📌 Status: {status}")
+    lines = [line for line in original_text.splitlines() if not line.startswith("📌 Status:")]
+    lines.append(f"📌 Status: {STATUS_LABELS[status]}")
     try:
-        await query.edit_message_text(
-            text="\n".join(lines),
-            reply_markup=lead_status_keyboard(request_id),
-        )
+        await query.edit_message_text(text="\n".join(lines), reply_markup=lead_status_keyboard(request_id))
     except Exception:
         logger.exception("Status saved in Sheets, but Telegram message could not be edited.")
-    await query.answer(f"Status updated: {status}")
+    await query.answer(f"Status updated: {STATUS_LABELS[status]}")
+
+
+async def orders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    owner_id = str(OWNER_CHAT_ID).strip()
+    if not owner_id or not user or str(user.id) != owner_id:
+        await update.effective_message.reply_text("This command is available to the bot owner only.")
+        return
+    await send_orders(update.effective_message, context, "All")
+
+
+async def send_orders(message, context, status_filter="All", callback_query=None):
+    ok, result = await sheets_action({"action": "get_orders"})
+    if not ok:
+        err = "Could not retrieve orders from Google Sheets. Check the Apps Script deployment."
+        if callback_query:
+            await callback_query.answer(err, show_alert=True)
+        else:
+            await message.reply_text(err)
+        logger.error("Could not retrieve orders: %s", result)
+        return
+
+    orders = result.get("orders", [])
+    if status_filter != "All":
+        orders = [o for o in orders if str(o.get("status", "New")) == status_filter]
+    # Newest first, show up to 15 per Telegram message to avoid message-length limits.
+    orders = list(reversed(orders))[:15]
+    title = "📋 Your Clean Home — Orders"
+    if status_filter != "All":
+        title += f"\nFilter: {STATUS_LABELS.get(status_filter, status_filter)}"
+    lines = [title, ""]
+    for order in orders:
+        status = str(order.get("status") or "New")
+        lines.append(
+            f"{STATUS_LABELS.get(status, status)} | {order.get('request_id', '—')}\n"
+            f"👤 {order.get('name', '—')} · 🧹 {order.get('service', '—')}\n"
+            f"💰 {order.get('estimated_price', '—')} AMD · 📅 {order.get('created_at', '—')}"
+        )
+    if not orders:
+        lines.append("No orders found for this status.")
+    text = "\n\n".join(lines)
+    if callback_query:
+        await callback_query.answer()
+        try:
+            await callback_query.edit_message_text(text=text, reply_markup=status_filter_keyboard())
+        except Exception:
+            await message.reply_text(text, reply_markup=status_filter_keyboard())
+    else:
+        await message.reply_text(text, reply_markup=status_filter_keyboard())
+
+
+async def order_filter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = update.effective_user
+    owner_id = str(OWNER_CHAT_ID).strip()
+    if not owner_id or not user or str(user.id) != owner_id:
+        await query.answer("Not authorized.", show_alert=True)
+        return
+    status_filter = query.data.split(":", 1)[1]
+    if status_filter != "All" and status_filter not in STATUS_LABELS:
+        await query.answer("Unknown filter.", show_alert=True)
+        return
+    await send_orders(query.message, context, status_filter, callback_query=query)
 
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -738,7 +808,8 @@ async def finish_lead(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📍 Հասցե՝ {data.get('address', '—')}\n"
         f"🕒 Կապի հարմար ժամ՝ {data.get('contact_time', '—')}\n"
         f"💬 Telegram՝ {username}\n"
-        f"🆔 Telegram ID՝ {user.id if user else '—'}"
+        f"🆔 Telegram ID՝ {user.id if user else '—'}\n"
+        f"📌 Status: {STATUS_LABELS['New']}"
     )
     if not sheets_ok:
         lead += (
@@ -919,6 +990,8 @@ def main():
     )
     app.add_handler(conversation)
     app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("orders", orders_command))
+    app.add_handler(CallbackQueryHandler(order_filter_callback, pattern=r"^orderfilter:"))
     app.add_handler(CallbackQueryHandler(update_lead_status, pattern=r"^status:"))
     logger.info("Your Clean Home multilingual Telegram bot is running.")
     app.run_polling()
