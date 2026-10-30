@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 # User tracking database. Set BOT_USERS_DB to a persistent path on your host
 # (for example, a mounted Render disk) so records survive redeployments.
 USERS_DB_PATH = os.getenv("BOT_USERS_DB", "bot_users.sqlite3")
+WELCOME_IMAGE_URL = os.getenv(
+    "WELCOME_IMAGE_URL",
+    "https://your-clean-home.vercel.app/assets/ych-logo.png"
+).strip()
 
 
 def init_users_db():
@@ -198,7 +202,7 @@ LANGS = {
 SERVICE_IDS = ["regular", "deep", "post", "steam", "dry", "ironing"]
 T = {
 "hy": {
-    "welcome": "Բարի գալուստ Your Clean Home 💚🧹\n\nՄենք կօգնենք Ձեր տունը դարձնել մաքուր, թարմ ու հարմարավետ։\n\nԸնտրեք ցանկալի տարբերակը ներքևի մենյուից։",
+    "welcome": "Բարի գալուստ Your Clean Home 💚\n\n«Երբ հարմարավետությունը միաձուլվում է մաքրության հետ»\n\nՄաքրությունը վստահեք մեզ, իսկ ազատ ժամանակը՝ ձեզ։\n\nԸնտրեք՝ ինչով կարող ենք օգնել։",
     "menu_services": "🧹 Մեր ծառայությունները", "estimate": "💰 Մոտավոր հաշվարկել",
     "request": "📝 Ուղարկել հայտ", "call": "📞 Զանգահարել մեզ",
     "main": "⬅️ Գլխավոր մենյու", "back": "⬅️ Նախորդ քայլ",
@@ -250,7 +254,7 @@ T = {
     "contact_error": "Չհաջողվեց ստանալ հեռախոսահամարը։ Փորձեք կրկին։"
 },
 "ru": {
-    "welcome": "Добро пожаловать в Your Clean Home 💚🧹\n\nМы поможем сделать ваш дом чистым, свежим и уютным.\n\nВыберите нужный пункт в меню ниже.",
+    "welcome": "Добро пожаловать в Your Clean Home 💚\n\nМы позаботимся о чистоте, чтобы вы могли больше времени уделять себе и близким.\n\nВыберите, чем мы можем помочь.",
     "menu_services": "🧹 Наши услуги", "estimate": "💰 Рассчитать стоимость",
     "request": "📝 Оставить заявку", "call": "📞 Позвонить нам",
     "main": "⬅️ Главное меню", "back": "⬅️ Назад",
@@ -301,7 +305,7 @@ T = {
     "contact_error": "Не удалось получить номер телефона. Попробуйте ещё раз."
 },
 "en": {
-    "welcome": "Welcome to Your Clean Home 💚🧹\n\nWe’ll help make your home clean, fresh, and comfortable.\n\nChoose an option from the menu below.",
+    "welcome": "Welcome to Your Clean Home 💚\n\nWe take care of the cleaning, so you can spend more time on what matters to you.\n\nChoose how we can help.",
     "menu_services": "🧹 Our services", "estimate": "💰 Estimate the price",
     "request": "📝 Submit a request", "call": "📞 Call us",
     "main": "⬅️ Main menu", "back": "⬅️ Back",
@@ -471,7 +475,24 @@ def calc(sid, area=None, hours=None):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update.effective_user, context.user_data.get("lang"))
     context.user_data.clear()
-    await update.effective_message.reply_text("Welcome / Բարի գալուստ / Добро пожаловать 💚\n\n" + LANGS["hy"]["welcome"], reply_markup=language_keyboard())
+    language_prompt = (
+        "Բարի գալուստ • Добро пожаловать • Welcome to Your Clean Home 💚\n\n"
+        "Ընտրեք լեզուն • Выберите язык • Choose your language:"
+    )
+    # Send the brand logo with the language selector. If the hosted image is unavailable,
+    # the bot still works and falls back to a text message with the same buttons.
+    try:
+        await update.effective_message.reply_photo(
+            photo=WELCOME_IMAGE_URL,
+            caption=language_prompt,
+            reply_markup=language_keyboard(),
+        )
+    except Exception:
+        logger.exception("Could not send welcome image; falling back to text")
+        await update.effective_message.reply_text(
+            language_prompt,
+            reply_markup=language_keyboard(),
+        )
     return LANG
 
 async def choose_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
