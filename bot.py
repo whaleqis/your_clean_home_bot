@@ -580,6 +580,138 @@ async def save_lead_to_google_sheets(data, user, visible_service, language):
         return False, str(exc)
 
 
+async def sheets_action(payload):
+    """Send a protected action to Google Apps Script without changing lead submission."""
+    if not GOOGLE_SHEETS_URL or not GOOGLE_SHEETS_SECRET:
+        return False, "Google Sheets URL/secret is not configured"
+    request_payload = dict(payload)
+    request_payload["key"] = GOOGLE_SHEETS_SECRET
+    body = json.dumps(request_payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        GOOGLE_SHEETS_URL,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    def _post():
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return response.read().decode("utf-8", errors="replace")
+
+    try:
+        response_text = await asyncio.to_thread(_post)
+        result = json.loads(response_text)
+        if not result.get("success"):
+            return False, result.get("error", "Unknown Google Apps Script error")
+        return True, result
+    except Exception as exc:
+        logger.exception("Google Sheets action failed")
+        return False, str(exc)
+
+
+def lead_status_keyboard(request_id):
+    statuses = [
+        ("New", "🆕 New"),
+        ("Contacted", "📞 Contacted"),
+        ("Confirmed", "✅ Confirmed"),
+        ("Completed", "🧹 Completed"),
+        ("Cancelled", "❌ Cancelled"),
+    ]
+    rows = []
+    for i in range(0, len(statuses), 2):
+        rows.append([
+            InlineKeyboardButton(label, callback_data=f"status:{request_id}:{status}")
+            for status, label in statuses[i:i + 2]
+        ])
+    return InlineKeyboardMarkup(rows)
+
+
+async def update_lead_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    # OWNER_CHAT_ID is a chat ID. For a private owner chat it is normally the owner's user ID.
+    owner_id = str(OWNER_CHAT_ID).strip()
+    if not owner_id or str(query.message.chat_id) != owner_id:
+        await query.answer("Not authorized.", show_alert=True)
+        return
+
+    try:
+        _, request_id, status = query.data.split(":", 2)
+    except (AttributeError, ValueError):
+        await query.answer("Invalid status action.", show_alert=True)
+        return
+
+    if status not in {"New", "Contacted", "Confirmed", "Completed", "Cancelled"}:
+        await query.answer("Unknown status.", show_alert=True)
+        return
+
+    ok, result = await sheets_action({
+        "action": "update_status",
+        "request_id": request_id,
+        "status": status,
+    })
+    if not ok:
+        await query.answer("Could not update Google Sheets.", show_alert=True)
+        logger.error("Could not update lead status: %s", result)
+        return
+
+    # Keep the original notification text; append/update only the status line.
+    original_text = query.message.text or ""
+    lines = [
+        line for line in original_text.splitlines()
+        if not line.startswith("📌 Status:")
+    ]
+    lines.append(f"📌 Status: {status}")
+    try:
+        await query.edit_message_text(
+            text="\n".join(lines),
+            reply_markup=lead_status_keyboard(request_id),
+        )
+    except Exception:
+        logger.exception("Status saved in Sheets, but Telegram message could not be edited.")
+    await query.answer(f"Status updated: {status}")
+
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    owner_id = str(OWNER_CHAT_ID).strip()
+    if not owner_id or not user or str(user.id) != owner_id:
+        await update.effective_message.reply_text(
+            "This command is available to the bot owner only."
+        )
+        return
+
+    ok, result = await sheets_action({"action": "get_stats"})
+    if not ok:
+        await update.effective_message.reply_text(
+            "Could not get statistics from Google Sheets. Please check the Apps Script deployment."
+        )
+        logger.error("Could not get stats: %s", result)
+        return
+
+    stats = result.get("stats", {})
+    statuses = stats.get("statuses", {})
+    services = stats.get("services", {})
+    lines = [
+        "📊 Your Clean Home — պատվերների վիճակագրություն",
+        "",
+        f"📦 Ընդհանուր պատվերներ՝ {stats.get('total', 0)}",
+        f"🆕 Նոր՝ {statuses.get('New', 0)}",
+        f"📞 Կապ հաստատված՝ {statuses.get('Contacted', 0)}",
+        f"✅ Հաստատված՝ {statuses.get('Confirmed', 0)}",
+        f"🧹 Ավարտված՝ {statuses.get('Completed', 0)}",
+        f"❌ Չեղարկված՝ {statuses.get('Cancelled', 0)}",
+        "",
+        "🧽 Ըստ ծառայությունների՝",
+    ]
+    if services:
+        lines.extend(f"• {name}: {count}" for name, count in sorted(services.items()))
+    else:
+        lines.append("• Դեռ պատվերներ չկան։")
+    await update.effective_message.reply_text("\n".join(lines))
+
+
 async def finish_lead(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data
     data["request_step"] = "submitting"
@@ -615,7 +747,12 @@ async def finish_lead(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     if OWNER_CHAT_ID:
         try:
-            await context.bot.send_message(chat_id=OWNER_CHAT_ID, text=lead)
+            keyboard = lead_status_keyboard(sheets_info) if sheets_ok and sheets_info else None
+            await context.bot.send_message(
+                chat_id=OWNER_CHAT_ID,
+                text=lead,
+                reply_markup=keyboard,
+            )
         except Exception:
             logger.exception("Could not send lead")
             await update.effective_message.reply_text(tr(context, "send_error"), reply_markup=main_keyboard(context))
@@ -781,6 +918,8 @@ def main():
         allow_reentry=True,
     )
     app.add_handler(conversation)
+    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CallbackQueryHandler(update_lead_status, pattern=r"^status:"))
     logger.info("Your Clean Home multilingual Telegram bot is running.")
     app.run_polling()
 
