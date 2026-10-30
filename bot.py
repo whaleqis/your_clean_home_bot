@@ -221,6 +221,23 @@ SERVICE_PRICES = {
     "post": ("post", 800, 32000),
 }
 
+# Dry-cleaning items. Packages are selectable as separate bundled options.
+DRY_ITEMS = {
+    "sofa2": ("Two-seat sofa", "Երկտեղանի բազմոց", "Двухместный диван", 8000),
+    "sofa3": ("Three-seat sofa", "Եռատեղանի բազմոց", "Трёхместный диван", 10000),
+    "corner": ("Corner sofa", "Անկյունային բազմոց", "Угловой диван", 15000),
+    "armchair": ("Armchair", "Բազկաթոռ", "Кресло", 2500),
+    "softchair": ("Upholstered chair", "Փափուկ աթոռ", "Мягкий стул", 2000),
+    "woodchair": ("Wooden chair", "Փայտե աթոռ", "Деревянный стул", 1000),
+    "singlemattress": ("Single mattress", "Մեկտեղանի ներքնակ", "Односпальный матрас", 8000),
+    "doublemattress": ("Double mattress", "Երկտեղանի ներքնակ", "Двуспальный матрас", 12000),
+    "childmattress": ("Child mattress", "Մանկական ներքնակ", "Детский матрас", 6000),
+    "pack2": ("2-seat sofa + 2 armchairs (package)", "Երկտեղանի բազմոց + 2 բազկաթոռ (փաթեթ)", "Двухместный диван + 2 кресла (комплект)", 10000),
+    "pack3": ("3-seat sofa + 2 armchairs (package)", "Եռատեղանի բազմոց + 2 բազկաթոռ (փաթեթ)", "Трёхместный диван + 2 кресла (комплект)", 12000),
+}
+
+DRY_LABEL_INDEX = {"en": 0, "hy": 1, "ru": 2}
+
 
 def lang(context):
     return context.user_data.get("lang", "hy")
@@ -297,7 +314,7 @@ def calc(sid, area=None, hours=None):
         _, rate, minimum = SERVICE_PRICES[sid]
         return max(minimum, area * rate)
     if sid == "steam":
-        return 15000 if area < 10 else area * 1000
+        return max(15000, area * 1000)
     if sid == "ironing":
         return hours * 4000
     return None
@@ -363,6 +380,89 @@ async def show_service_details(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.message.reply_text(detail + prompt, reply_markup=services_browser_keyboard(context))
     return SERVICE_INFO
 
+def dry_item_label(context, key):
+    item = DRY_ITEMS[key]
+    label = item[DRY_LABEL_INDEX[lang(context)]]
+    return f"{label} — {money(item[3], context)}"
+
+def dry_keyboard(context):
+    items = context.user_data.setdefault("dry_items", {})
+    rows = []
+    for key, item in DRY_ITEMS.items():
+        qty = items.get(key, 0)
+        label = item[DRY_LABEL_INDEX[lang(context)]]
+        rows.append([
+            InlineKeyboardButton("−", callback_data=f"dry:dec:{key}"),
+            InlineKeyboardButton(f"{'✅ ' if qty else ''}{label} ({money(item[3], context)}) ×{qty}", callback_data=f"dry:toggle:{key}"),
+            InlineKeyboardButton("+", callback_data=f"dry:inc:{key}"),
+        ])
+    if lang(context) == "hy":
+        rows.append([InlineKeyboardButton("🧮 Հաշվել արժեքը", callback_data="dry:calculate")])
+        rows.append([InlineKeyboardButton("🗑 Մաքրել ընտրությունը", callback_data="dry:clear")])
+    elif lang(context) == "ru":
+        rows.append([InlineKeyboardButton("🧮 Рассчитать стоимость", callback_data="dry:calculate")])
+        rows.append([InlineKeyboardButton("🗑 Очистить выбор", callback_data="dry:clear")])
+    else:
+        rows.append([InlineKeyboardButton("🧮 Calculate price", callback_data="dry:calculate")])
+        rows.append([InlineKeyboardButton("🗑 Clear selection", callback_data="dry:clear")])
+    return InlineKeyboardMarkup(rows)
+
+async def dry_calculator_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data.split(":")
+    items = context.user_data.setdefault("dry_items", {})
+    if data[1] in ("toggle", "inc", "dec") and len(data) == 3:
+        key = data[2]
+        if key in DRY_ITEMS:
+            # Bundles replace their equivalent sofa/chair selections to prevent double-charging.
+            equivalents = {"pack2": ["sofa2", "armchair"], "pack3": ["sofa3", "armchair"]}
+            if data[1] == "toggle":
+                target_qty = 0 if items.get(key, 0) else 1
+            elif data[1] == "inc":
+                target_qty = items.get(key, 0) + 1
+            else:
+                target_qty = max(0, items.get(key, 0) - 1)
+            if target_qty > 0:
+                if key in equivalents:
+                    for other in equivalents[key]:
+                        items.pop(other, None)
+                elif key in ("sofa2", "sofa3", "armchair"):
+                    for package, members in equivalents.items():
+                        if key in members:
+                            items.pop(package, None)
+                items[key] = target_qty
+            else:
+                items.pop(key, None)
+    elif data[1] == "clear":
+        items.clear()
+    elif data[1] == "calculate":
+        total = sum(DRY_ITEMS[key][3] * qty for key, qty in items.items())
+        if total <= 0:
+            prompts = {"hy": "Ընտրեք առնվազն մեկ իր՝ արժեքը հաշվարկելու համար։", "ru": "Выберите хотя бы один предмет для расчёта.", "en": "Select at least one item to calculate the price."}
+            await query.message.reply_text(prompts[lang(context)], reply_markup=dry_keyboard(context))
+            return MENU
+        summary = []
+        for key, qty in items.items():
+            summary.append(f"• {DRY_ITEMS[key][DRY_LABEL_INDEX[lang(context)]]} × {qty} — {money(DRY_ITEMS[key][3] * qty, context)}")
+        context.user_data["service"] = "dry"
+        context.user_data["estimate"] = total
+        context.user_data["area"] = "; ".join(f"{DRY_ITEMS[k][DRY_LABEL_INDEX[lang(context)]]} ×{q}" for k, q in items.items())
+        headings = {"hy": "🛋 Քիմմաքրման նախնական հաշվարկ", "ru": "🛋 Предварительный расчёт химчистки", "en": "🛋 Dry-cleaning estimate"}
+        footer = {
+            "hy": "\n\n📌 Սա նախնական հաշվարկ է։ Տեխնիկայի առաքման վճարը կախված է հասցեից։",
+            "ru": "\n\n📌 Это предварительный расчёт. Стоимость доставки оборудования зависит от адреса.",
+            "en": "\n\n📌 This is a preliminary estimate. Equipment delivery fee depends on the address.",
+        }
+        await query.message.reply_text(
+            headings[lang(context)] + "\n\n" + "\n".join(summary)
+            + f"\n\n💰 {money(total, context)}" + footer[lang(context)],
+            reply_markup=result_keyboard(context),
+        )
+        return MENU
+    await query.edit_message_reply_markup(reply_markup=dry_keyboard(context))
+    return MENU
+
 async def choose_estimate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["flow"] = "estimate"
     context.user_data.pop("service", None)
@@ -396,7 +496,9 @@ async def choose_service(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(tr(context, "name_prompt"), reply_markup=step_keyboard(context))
         return NAME
     if sid == "dry":
-        await update.effective_message.reply_text(tr(context, "extras_dry") + "\n\n" + tr(context, "dry_more"), reply_markup=result_keyboard(context))
+        context.user_data["dry_items"] = {}
+        prompts = {"hy": "Ընտրեք քիմմաքրման ենթակա իրերը։ Կարող եք ընտրել մի քանի տարբերակ։ Փաթեթ ընտրելիս նույն իրերը առանձին մի ընտրեք։", "ru": "Выберите предметы для химчистки. Можно выбрать несколько вариантов. При выборе комплекта не выбирайте те же предметы отдельно.", "en": "Select the items for dry cleaning. You can select multiple items. If you choose a package, do not select the same items separately."}
+        await update.effective_message.reply_text(prompts[lang(context)], reply_markup=dry_keyboard(context))
         return MENU
     if sid == "ironing":
         await update.effective_message.reply_text(tr(context, "ironing_prompt"), reply_markup=hours_keyboard(context))
@@ -969,6 +1071,7 @@ def main():
         states={
             LANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, choose_language)],
             MENU: [
+                CallbackQueryHandler(dry_calculator_callback, pattern=r"^dry:(?:(?:toggle|inc|dec):[a-z0-9]+|calculate|clear)$"),
                 MessageHandler(filters.Regex(r"^(🧹 Մեր ծառայությունները|🧹 Наши услуги|🧹 Our services)$"), show_services),
                 MessageHandler(filters.Regex(r"^(💰 Մոտավոր հաշվարկել|💰 Рассчитать стоимость|💰 Estimate the price)$"), choose_estimate),
                 MessageHandler(filters.Regex(r"^(📝 Ուղարկել հայտ|📝 Оставить заявку|📝 Submit a request)$"), start_request),
