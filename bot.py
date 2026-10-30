@@ -561,6 +561,67 @@ async def call_us(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(tr(context, "call_text"), reply_markup=main_keyboard(context))
     return MENU
 
+async def resume_after_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Re-enter the conversation when a user presses an existing reply-keyboard button
+    after a redeploy has cleared ConversationHandler's in-memory state.
+    """
+    text = (update.effective_message.text or "").strip()
+
+    # Infer the language from the button the user actually pressed.
+    selected_language = None
+    for language, translations in T.items():
+        button_texts = [
+            translations["menu_services"], translations["estimate"],
+            translations["request"], translations["call"],
+            translations["change_lang"], translations["main"],
+            translations["back"],
+        ] + translations["service_names"]
+        if text in button_texts:
+            selected_language = language
+            break
+
+    # Language buttons are recognizable by their visible text, regardless of emoji encoding.
+    if "Հայերեն" in text:
+        context.user_data["lang"] = "hy"
+        return await choose_language(update, context)
+    if "Русский" in text:
+        context.user_data["lang"] = "ru"
+        return await choose_language(update, context)
+    if "English" in text:
+        context.user_data["lang"] = "en"
+        return await choose_language(update, context)
+
+    if selected_language:
+        context.user_data["lang"] = selected_language
+
+    # Route the button to the same handler used during a normal conversation.
+    for language, translations in T.items():
+        if text == translations["menu_services"]:
+            return await show_services(update, context)
+        if text == translations["estimate"]:
+            return await choose_estimate(update, context)
+        if text == translations["request"]:
+            return await start_request(update, context)
+        if text == translations["call"]:
+            return await call_us(update, context)
+        if text == translations["change_lang"]:
+            return await change_language(update, context)
+        if text in translations["service_names"]:
+            return await choose_service(update, context)
+        if text == translations["main"]:
+            await update.effective_message.reply_text(
+                tr(context, "welcome"), reply_markup=main_keyboard(context)
+            )
+            return MENU
+
+    # The text was not a known button. Show a helpful menu instead of ignoring it.
+    await update.effective_message.reply_text(
+        tr(context, "unknown"), reply_markup=main_keyboard(context)
+    )
+    return MENU
+
+
 async def unknown_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(tr(context, "unknown"), reply_markup=main_keyboard(context))
     return MENU
@@ -575,7 +636,15 @@ def main():
         raise RuntimeError("BOT_TOKEN was not found. Check your environment variables.")
     app = Application.builder().token(BOT_TOKEN).build()
     conversation = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+        entry_points=[
+            CommandHandler("start", start),
+            # These entry points recover users whose conversation state was lost on redeploy.
+            MessageHandler(filters.TEXT & ~filters.COMMAND, resume_after_restart),
+            CallbackQueryHandler(
+                show_service_details,
+                pattern=r"^svc:(regular|deep|post|steam|dry|ironing|main)$",
+            ),
+        ],
         states={
             LANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, choose_language)],
             MENU: [
