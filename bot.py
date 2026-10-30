@@ -1,6 +1,8 @@
 import os
 import re
 import logging
+import sqlite3
+from datetime import datetime, timezone, timedelta
 
 from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
@@ -14,6 +16,115 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID", "").strip()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# User tracking database. Set BOT_USERS_DB to a persistent path on your host
+# (for example, a mounted Render disk) so records survive redeployments.
+USERS_DB_PATH = os.getenv("BOT_USERS_DB", "bot_users.sqlite3")
+
+
+def init_users_db():
+    """Create the user tracking table if it does not already exist."""
+    with sqlite3.connect(USERS_DB_PATH) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS bot_users (
+                telegram_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                language TEXT,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+
+
+def track_user(user, language=None):
+    """Record a user who starts the bot, without duplicating their Telegram ID."""
+    if user is None:
+        return
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with sqlite3.connect(USERS_DB_PATH) as conn:
+        conn.execute("""
+            INSERT INTO bot_users
+                (telegram_id, username, first_name, last_name, language, first_seen, last_seen)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(telegram_id) DO UPDATE SET
+                username = excluded.username,
+                first_name = excluded.first_name,
+                last_name = excluded.last_name,
+                language = COALESCE(excluded.language, bot_users.language),
+                last_seen = excluded.last_seen
+        """, (
+            user.id, user.username, user.first_name, user.last_name,
+            language, now, now
+        ))
+        conn.commit()
+
+
+def is_bot_admin(update: Update) -> bool:
+    """Only allow the configured owner account to view tracked users."""
+    if not OWNER_CHAT_ID:
+        return False
+    user = update.effective_user
+    return bool(user and str(user.id) == OWNER_CHAT_ID)
+
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_bot_admin(update):
+        await update.effective_message.reply_text("This command is available to the bot owner only.")
+        return
+    with sqlite3.connect(USERS_DB_PATH) as conn:
+        total = conn.execute("SELECT COUNT(*) FROM bot_users").fetchone()[0]
+        recent = conn.execute(
+            "SELECT COUNT(*) FROM bot_users WHERE first_seen >= ?",
+            ((datetime.now(timezone.utc) - timedelta(days=7)).isoformat(timespec="seconds"),)
+        ).fetchone()[0]
+        languages = conn.execute(
+            "SELECT COALESCE(language, 'unknown'), COUNT(*) FROM bot_users GROUP BY language ORDER BY COUNT(*) DESC"
+        ).fetchall()
+    language_text = "\n".join(f"• {language}: {count}" for language, count in languages) or "No users yet."
+    await update.effective_message.reply_text(
+        f"📊 Your Clean Home bot statistics\n\n"
+        f"👥 Tracked users: {total}\n"
+        f"🆕 First started in the last 7 days: {recent}\n\n"
+        f"🌐 Languages:\n{language_text}\n\n"
+        f"Use /users to see the tracked user list."
+    )
+
+
+async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_bot_admin(update):
+        await update.effective_message.reply_text("This command is available to the bot owner only.")
+        return
+    with sqlite3.connect(USERS_DB_PATH) as conn:
+        rows = conn.execute("""
+            SELECT telegram_id, username, first_name, last_name, language, first_seen, last_seen
+            FROM bot_users ORDER BY last_seen DESC
+        """).fetchall()
+    if not rows:
+        await update.effective_message.reply_text(
+            "No users have been tracked yet. Users are added when they send /start."
+        )
+        return
+
+    lines = [f"👥 Tracked bot users: {len(rows)}"]
+    for telegram_id, username, first_name, last_name, language, first_seen, last_seen in rows:
+        full_name = " ".join(part for part in (first_name, last_name) if part) or "No name"
+        handle = f"@{username}" if username else "No username"
+        lines.append(
+            f"\n• {full_name} ({handle})\n"
+            f"  ID: {telegram_id} | Language: {language or 'unknown'}\n"
+            f"  First: {first_seen}\n  Last: {last_seen}"
+        )
+    message = ""
+    for line in lines:
+        if len(message) + len(line) > 3500:
+            await update.effective_message.reply_text(message)
+            message = ""
+        message += line
+    if message:
+        await update.effective_message.reply_text(message)
 
 LANG, MENU, SERVICE, AREA, HOURS, NAME, PHONE, ADDRESS, CONTACT_TIME, SERVICE_INFO = range(10)
 
@@ -298,6 +409,7 @@ def calc(sid, area=None, hours=None):
     return None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    track_user(update.effective_user, context.user_data.get("lang"))
     context.user_data.clear()
     await update.effective_message.reply_text("Welcome / Բարի գալուստ / Добро пожаловать 💚\n\n" + LANGS["hy"]["welcome"], reply_markup=language_keyboard())
     return LANG
@@ -310,6 +422,7 @@ async def choose_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return LANG
     context.user_data.clear()
     context.user_data["lang"] = selected
+    track_user(update.effective_user, selected)
     await update.effective_message.reply_text(tr(context, "welcome"), reply_markup=main_keyboard(context))
     return MENU
 
@@ -573,7 +686,11 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN was not found. Check your environment variables.")
+    init_users_db()
     app = Application.builder().token(BOT_TOKEN).build()
+    # Owner-only tracking commands must be registered before the conversation handler.
+    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("users", users_command))
     conversation = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
