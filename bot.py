@@ -701,8 +701,26 @@ def main():
     conversation = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
-            # These entry points recover users whose conversation state was lost on redeploy.
-            MessageHandler(filters.TEXT & ~filters.COMMAND, resume_after_restart),
+            # Recover only recognized keyboard buttons after a redeploy.
+            # Do not catch arbitrary text here: names like "Kris" must reach NAME state.
+            MessageHandler(
+                filters.Regex(
+                    "^(?:" + "|".join(re.escape(text) for text in sorted({
+                        name
+                        for translations in T.values()
+                        for name in (
+                            translations["menu_services"], translations["estimate"],
+                            translations["request"], translations["call"],
+                            translations["change_lang"], translations["main"],
+                            translations["back"], translations["other_area"],
+                            translations["other_hours"], translations["send_phone"],
+                            translations["type_phone"], translations["time_any"],
+                            *translations["service_names"], *translations["time_intervals"],
+                        )
+                    } | {entry["name"] for entry in LANGS.values()})) + ")$"
+                ) & filters.TEXT & ~filters.COMMAND,
+                resume_after_restart,
+            ),
             CallbackQueryHandler(
                 show_service_details,
                 pattern=r"^svc:(regular|deep|post|steam|dry|ironing|main)$",
