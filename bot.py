@@ -496,8 +496,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return LANG
 
 async def choose_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.effective_message.text
-    selected = next((k for k, v in LANGS.items() if text == v["name"]), None)
+    text = (update.effective_message.text or "").strip()
+
+    def normalize_button(value):
+        # Telegram/iOS can represent flag and emoji characters with invisible variation selectors.
+        return value.replace("\\ufe0f", "").replace("\\u200d", "").strip()
+
+    normalized_text = normalize_button(text)
+    selected = next(
+        (k for k, v in LANGS.items() if normalize_button(v["name"]) == normalized_text),
+        None,
+    )
     if not selected:
         await update.effective_message.reply_text("Please choose a language / Խնդրում ենք ընտրել լեզուն / Пожалуйста, выберите язык.", reply_markup=language_keyboard())
         return LANG
@@ -508,7 +517,7 @@ async def choose_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MENU
 
 async def change_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.effective_message.reply_text("Choose your language / Ընտրեք լեզուն / Выберите язык:", reply_markup=language_keyboard())
+    await update.effective_message.reply_text("Ընտրեք լեզուն • Выберите язык • Choose your language:", reply_markup=language_keyboard())
     return LANG
 
 async def show_services(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -789,6 +798,10 @@ def main():
                 MessageHandler(filters.Regex(r"^(📝 Ուղարկել հայտ|📝 Оставить заявку|📝 Submit a request)$"), start_request),
                 MessageHandler(filters.Regex(r"^(📞 Զանգահարել մեզ|📞 Позвонить нам|📞 Call us)$"), call_us),
                 MessageHandler(filters.Regex(r"^(🌐 Փոխել լեզուն|🌐 Сменить язык|🌐 Change language)$"), change_language),
+                MessageHandler(
+                    filters.Regex(r"^(🇦🇲 Հայերեն|🇷🇺 Русский|🇬🇧 English)$"),
+                    choose_language,
+                ),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_menu),
             ],
             SERVICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, choose_service)],
