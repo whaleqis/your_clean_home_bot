@@ -1,8 +1,6 @@
 import os
 import re
 import logging
-import sqlite3
-from datetime import datetime, timezone, timedelta
 
 from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
@@ -17,179 +15,6 @@ OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID", "").strip()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# User tracking database. Set BOT_USERS_DB to a persistent path on your host
-# (for example, a mounted Render disk) so records survive redeployments.
-USERS_DB_PATH = os.getenv("BOT_USERS_DB", "bot_users.sqlite3")
-WELCOME_IMAGE_URL = os.getenv(
-    "WELCOME_IMAGE_URL",
-    "https://your-clean-home.vercel.app/assets/ych-logo.png"
-).strip()
-
-
-def init_users_db():
-    """Create the user tracking table if it does not already exist."""
-    with sqlite3.connect(USERS_DB_PATH) as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS bot_users (
-                telegram_id INTEGER PRIMARY KEY,
-                username TEXT,
-                first_name TEXT,
-                last_name TEXT,
-                language TEXT,
-                first_seen TEXT NOT NULL,
-                last_seen TEXT NOT NULL
-            )
-        """)
-        conn.commit()
-
-
-def track_user(user, language=None):
-    """Record a user who starts the bot, without duplicating their Telegram ID."""
-    if user is None:
-        return
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    with sqlite3.connect(USERS_DB_PATH) as conn:
-        conn.execute("""
-            INSERT INTO bot_users
-                (telegram_id, username, first_name, last_name, language, first_seen, last_seen)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(telegram_id) DO UPDATE SET
-                username = excluded.username,
-                first_name = excluded.first_name,
-                last_name = excluded.last_name,
-                language = COALESCE(excluded.language, bot_users.language),
-                last_seen = excluded.last_seen
-        """, (
-            user.id, user.username, user.first_name, user.last_name,
-            language, now, now
-        ))
-        conn.commit()
-
-
-def get_stored_language(user_id):
-    """Return a user's saved language, if one was recorded previously."""
-    if not user_id:
-        return None
-    try:
-        with sqlite3.connect(USERS_DB_PATH) as conn:
-            row = conn.execute(
-                "SELECT language FROM bot_users WHERE telegram_id = ?",
-                (user_id,)
-            ).fetchone()
-        return row[0] if row and row[0] in LANGS else None
-    except sqlite3.Error:
-        logger.exception("Could not restore saved language")
-        return None
-
-
-async def resume_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Resume the bot when a user presses a menu/service button after a redeploy."""
-    text = (update.effective_message.text or "").strip()
-    selected_language = None
-    action = None
-
-    # Identify the language and action from the text of the pressed reply-keyboard button.
-    for language, translations in T.items():
-        if text == translations["menu_services"]:
-            selected_language, action = language, show_services
-            break
-        if text == translations["estimate"]:
-            selected_language, action = language, choose_estimate
-            break
-        if text == translations["request"]:
-            selected_language, action = language, start_request
-            break
-        if text == translations["call"]:
-            selected_language, action = language, call_us
-            break
-        if text == translations["change_lang"]:
-            selected_language, action = language, change_language
-            break
-        if text in translations["service_names"]:
-            selected_language, action = language, choose_service
-            break
-
-    if selected_language:
-        context.user_data["lang"] = selected_language
-        track_user(update.effective_user, selected_language)
-        return await action(update, context)
-
-    # For any other text sent while no conversation is active, restore the saved language
-    # and show the main menu rather than silently ignoring the user.
-    if "lang" not in context.user_data:
-        saved_language = get_stored_language(update.effective_user.id if update.effective_user else None)
-        context.user_data["lang"] = saved_language or "hy"
-    await update.effective_message.reply_text(
-        tr(context, "unknown"),
-        reply_markup=main_keyboard(context)
-    )
-    return MENU
-
-
-def is_bot_admin(update: Update) -> bool:
-    """Only allow the configured owner account to view tracked users."""
-    if not OWNER_CHAT_ID:
-        return False
-    user = update.effective_user
-    return bool(user and str(user.id) == OWNER_CHAT_ID)
-
-
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_bot_admin(update):
-        await update.effective_message.reply_text("This command is available to the bot owner only.")
-        return
-    with sqlite3.connect(USERS_DB_PATH) as conn:
-        total = conn.execute("SELECT COUNT(*) FROM bot_users").fetchone()[0]
-        recent = conn.execute(
-            "SELECT COUNT(*) FROM bot_users WHERE first_seen >= ?",
-            ((datetime.now(timezone.utc) - timedelta(days=7)).isoformat(timespec="seconds"),)
-        ).fetchone()[0]
-        languages = conn.execute(
-            "SELECT COALESCE(language, 'unknown'), COUNT(*) FROM bot_users GROUP BY language ORDER BY COUNT(*) DESC"
-        ).fetchall()
-    language_text = "\n".join(f"• {language}: {count}" for language, count in languages) or "No users yet."
-    await update.effective_message.reply_text(
-        f"📊 Your Clean Home bot statistics\n\n"
-        f"👥 Tracked users: {total}\n"
-        f"🆕 First started in the last 7 days: {recent}\n\n"
-        f"🌐 Languages:\n{language_text}\n\n"
-        f"Use /users to see the tracked user list."
-    )
-
-
-async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_bot_admin(update):
-        await update.effective_message.reply_text("This command is available to the bot owner only.")
-        return
-    with sqlite3.connect(USERS_DB_PATH) as conn:
-        rows = conn.execute("""
-            SELECT telegram_id, username, first_name, last_name, language, first_seen, last_seen
-            FROM bot_users ORDER BY last_seen DESC
-        """).fetchall()
-    if not rows:
-        await update.effective_message.reply_text(
-            "No users have been tracked yet. Users are added when they send /start."
-        )
-        return
-
-    lines = [f"👥 Tracked bot users: {len(rows)}"]
-    for telegram_id, username, first_name, last_name, language, first_seen, last_seen in rows:
-        full_name = " ".join(part for part in (first_name, last_name) if part) or "No name"
-        handle = f"@{username}" if username else "No username"
-        lines.append(
-            f"\n• {full_name} ({handle})\n"
-            f"  ID: {telegram_id} | Language: {language or 'unknown'}\n"
-            f"  First: {first_seen}\n  Last: {last_seen}"
-        )
-    message = ""
-    for line in lines:
-        if len(message) + len(line) > 3500:
-            await update.effective_message.reply_text(message)
-            message = ""
-        message += line
-    if message:
-        await update.effective_message.reply_text(message)
-
 LANG, MENU, SERVICE, AREA, HOURS, NAME, PHONE, ADDRESS, CONTACT_TIME, SERVICE_INFO = range(10)
 
 LANGS = {
@@ -202,7 +27,7 @@ LANGS = {
 SERVICE_IDS = ["regular", "deep", "post", "steam", "dry", "ironing"]
 T = {
 "hy": {
-    "welcome": "Բարի գալուստ Your Clean Home 💚\n\n«Երբ հարմարավետությունը միաձուլվում է մաքրության հետ»\n\nՄաքրությունը վստահեք մեզ, իսկ ազատ ժամանակը՝ ձեզ։\n\nԸնտրեք՝ ինչով կարող ենք օգնել։",
+    "welcome": "Բարի գալուստ Your Clean Home 💚🧹\n\nՄենք կօգնենք Ձեր տունը դարձնել մաքուր, թարմ ու հարմարավետ։\n\nԸնտրեք ցանկալի տարբերակը ներքևի մենյուից։",
     "menu_services": "🧹 Մեր ծառայությունները", "estimate": "💰 Մոտավոր հաշվարկել",
     "request": "📝 Ուղարկել հայտ", "call": "📞 Զանգահարել մեզ",
     "main": "⬅️ Գլխավոր մենյու", "back": "⬅️ Նախորդ քայլ",
@@ -254,7 +79,7 @@ T = {
     "contact_error": "Չհաջողվեց ստանալ հեռախոսահամարը։ Փորձեք կրկին։"
 },
 "ru": {
-    "welcome": "Добро пожаловать в Your Clean Home 💚\n\nМы позаботимся о чистоте, чтобы вы могли больше времени уделять себе и близким.\n\nВыберите, чем мы можем помочь.",
+    "welcome": "Добро пожаловать в Your Clean Home 💚🧹\n\nМы поможем сделать ваш дом чистым, свежим и уютным.\n\nВыберите нужный пункт в меню ниже.",
     "menu_services": "🧹 Наши услуги", "estimate": "💰 Рассчитать стоимость",
     "request": "📝 Оставить заявку", "call": "📞 Позвонить нам",
     "main": "⬅️ Главное меню", "back": "⬅️ Назад",
@@ -305,7 +130,7 @@ T = {
     "contact_error": "Не удалось получить номер телефона. Попробуйте ещё раз."
 },
 "en": {
-    "welcome": "Welcome to Your Clean Home 💚\n\nWe take care of the cleaning, so you can spend more time on what matters to you.\n\nChoose how we can help.",
+    "welcome": "Welcome to Your Clean Home 💚🧹\n\nWe’ll help make your home clean, fresh, and comfortable.\n\nChoose an option from the menu below.",
     "menu_services": "🧹 Our services", "estimate": "💰 Estimate the price",
     "request": "📝 Submit a request", "call": "📞 Call us",
     "main": "⬅️ Main menu", "back": "⬅️ Back",
@@ -473,26 +298,8 @@ def calc(sid, area=None, hours=None):
     return None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    track_user(update.effective_user, context.user_data.get("lang"))
     context.user_data.clear()
-    language_prompt = (
-        "Բարի գալուստ • Добро пожаловать • Welcome to Your Clean Home 💚\n\n"
-        "Ընտրեք լեզուն • Выберите язык • Choose your language:"
-    )
-    # Send the brand logo with the language selector. If the hosted image is unavailable,
-    # the bot still works and falls back to a text message with the same buttons.
-    try:
-        await update.effective_message.reply_photo(
-            photo=WELCOME_IMAGE_URL,
-            caption=language_prompt,
-            reply_markup=language_keyboard(),
-        )
-    except Exception:
-        logger.exception("Could not send welcome image; falling back to text")
-        await update.effective_message.reply_text(
-            language_prompt,
-            reply_markup=language_keyboard(),
-        )
+    await update.effective_message.reply_text("Welcome / Բարի գալուստ / Добро пожаловать 💚\n\n" + LANGS["hy"]["welcome"], reply_markup=language_keyboard())
     return LANG
 
 async def choose_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -503,7 +310,6 @@ async def choose_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return LANG
     context.user_data.clear()
     context.user_data["lang"] = selected
-    track_user(update.effective_user, selected)
     await update.effective_message.reply_text(tr(context, "welcome"), reply_markup=main_keyboard(context))
     return MENU
 
@@ -523,9 +329,6 @@ async def show_services(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_service_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if "lang" not in context.user_data:
-        saved_language = get_stored_language(update.effective_user.id if update.effective_user else None)
-        context.user_data["lang"] = saved_language or "hy"
     await query.answer()
     action = query.data.split(":", 1)[1] if query.data and ":" in query.data else ""
     t = T[lang(context)]
@@ -770,17 +573,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN was not found. Check your environment variables.")
-    init_users_db()
     app = Application.builder().token(BOT_TOKEN).build()
-    # Owner-only tracking commands must be registered before the conversation handler.
-    app.add_handler(CommandHandler("stats", stats_command))
-    app.add_handler(CommandHandler("users", users_command))
     conversation = ConversationHandler(
-        entry_points=[
-            CommandHandler("start", start),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, resume_entry),
-            CallbackQueryHandler(show_service_details, pattern=r"^svc:(regular|deep|post|steam|dry|ironing|main)$"),
-        ],
+        entry_points=[CommandHandler("start", start)],
         states={
             LANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, choose_language)],
             MENU: [
