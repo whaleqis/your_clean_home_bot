@@ -6,7 +6,8 @@ import asyncio
 import urllib.request
 
 from dotenv import load_dotenv
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from pathlib import Path
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, ReplyKeyboardRemove
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, ConversationHandler,
     ContextTypes, filters, CallbackQueryHandler,
@@ -20,7 +21,7 @@ GOOGLE_SHEETS_SECRET = os.getenv("GOOGLE_SHEETS_SECRET", "").strip()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-LANG, MENU, SERVICE, AREA, HOURS, NAME, PHONE, ADDRESS, CONTACT_TIME, SERVICE_INFO = range(10)
+LANG, MENU, SERVICE, AREA, HOURS, NAME, PHONE, ADDRESS, CONTACT_TIME, SERVICE_INFO, DRY_SELECTION = range(11)
 
 LANGS = {
     "hy": {"name": "🇦🇲 Հայերեն", "welcome": "Ընտրեք լեզուն։"},
@@ -357,19 +358,19 @@ async def dry_selection_callback(update: Update, context: ContextTypes.DEFAULT_T
     query=update.callback_query; await query.answer()
     parts=query.data.split(":")
     action=parts[1] if len(parts)>1 else ""
-    if action=="noop": return
+    if action=="noop": return DRY_SELECTION
     idx=context.user_data.get("dry_index",0)
     if action in ("plus","minus") and len(parts)>2:
         pid=parts[2]; counts=context.user_data.setdefault("dry_counts",{})
         counts[pid]=max(0,counts.get(pid,0)+(1 if action=="plus" else -1))
         if counts[pid]==0: counts.pop(pid,None)
-        await show_dry_item(query.message,context,idx,edit=True); return
-    if action=="next": await show_dry_item(query.message,context,idx+1,edit=True); return
-    if action=="prev": await show_dry_item(query.message,context,idx-1,edit=True); return
+        await show_dry_item(query.message,context,idx,edit=True); return DRY_SELECTION
+    if action=="next": await show_dry_item(query.message,context,idx+1,edit=True); return DRY_SELECTION
+    if action=="prev": await show_dry_item(query.message,context,idx-1,edit=True); return DRY_SELECTION
     if action=="done":
         counts=context.user_data.get("dry_counts",{}); total=dry_total(context); ui=DRY_UI[lang(context)]
         if total<=0:
-            await query.answer(ui["empty"],show_alert=True); return
+            await query.answer(ui["empty"],show_alert=True); return DRY_SELECTION
         lines=[ui["summary"]]
         for p in DRY_PRODUCTS:
             n=counts.get(p["id"],0)
@@ -378,7 +379,8 @@ async def dry_selection_callback(update: Update, context: ContextTypes.DEFAULT_T
         lines.append("\n"+ui["saved"])
         context.user_data["service"]="dry"; context.user_data["estimate"]=total
         context.user_data["area"]="; ".join(f"{p['name'][lang(context)]} × {counts[p['id']]}" for p in DRY_PRODUCTS if counts.get(p['id'],0))
-        await query.message.reply_text("\n".join(lines),reply_markup=result_keyboard(context)); return
+        await query.message.reply_text("\n".join(lines),reply_markup=result_keyboard(context)); return MENU
+    return DRY_SELECTION
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
@@ -428,11 +430,14 @@ async def show_service_details(update: Update, context: ContextTypes.DEFAULT_TYP
     detail = SERVICE_DETAILS[lang(context)][sid]
     extras_key = SERVICE_EXTRAS_KEY.get(sid)
     if sid == "dry":
-        await query.message.reply_text(detail + "\n\n" + DRY_UI[lang(context)]["intro"])
         context.user_data["dry_counts"] = {}
         context.user_data["dry_index"] = 0
+        await query.message.reply_text(
+            detail + "\n\n" + DRY_UI[lang(context)]["intro"],
+            reply_markup=ReplyKeyboardRemove(),
+        )
         await show_dry_item(query.message, context, 0)
-        return SERVICE_INFO
+        return DRY_SELECTION
     elif sid == "ironing":
         detail += "\n\n" + tr(context, "extras_ironing")
     elif extras_key:
@@ -480,8 +485,12 @@ async def choose_service(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if sid == "dry":
         context.user_data["dry_counts"] = {}
         context.user_data["dry_index"] = 0
+        await update.effective_message.reply_text(
+            DRY_UI[lang(context)]["intro"],
+            reply_markup=ReplyKeyboardRemove(),
+        )
         await show_dry_item(update.effective_message, context, 0)
-        return MENU
+        return DRY_SELECTION
     if sid == "ironing":
         await update.effective_message.reply_text(tr(context, "ironing_prompt"), reply_markup=hours_keyboard(context))
         return HOURS
@@ -1062,6 +1071,11 @@ def main():
             ],
             SERVICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, choose_service)],
             SERVICE_INFO: [CallbackQueryHandler(show_service_details, pattern=r"^svc:(regular|deep|post|steam|dry|ironing|main)$"), MessageHandler(filters.TEXT & ~filters.COMMAND, show_services)],
+            DRY_SELECTION: [
+                CallbackQueryHandler(dry_selection_callback, pattern=r"^dry:"),
+                CallbackQueryHandler(show_service_details, pattern=r"^svc:(regular|deep|post|steam|dry|ironing|main)$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_menu),
+            ],
             AREA: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_area)],
             HOURS: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_hours)],
             NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_name)],
@@ -1073,7 +1087,6 @@ def main():
         allow_reentry=True,
     )
     app.add_handler(conversation)
-    app.add_handler(CallbackQueryHandler(dry_selection_callback, pattern=r"^dry:"))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("orders", orders_command))
     app.add_handler(CallbackQueryHandler(order_filter_callback, pattern=r"^orderfilter:"))
