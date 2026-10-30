@@ -62,6 +62,66 @@ def track_user(user, language=None):
         conn.commit()
 
 
+def get_stored_language(user_id):
+    """Return a user's saved language, if one was recorded previously."""
+    if not user_id:
+        return None
+    try:
+        with sqlite3.connect(USERS_DB_PATH) as conn:
+            row = conn.execute(
+                "SELECT language FROM bot_users WHERE telegram_id = ?",
+                (user_id,)
+            ).fetchone()
+        return row[0] if row and row[0] in LANGS else None
+    except sqlite3.Error:
+        logger.exception("Could not restore saved language")
+        return None
+
+
+async def resume_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Resume the bot when a user presses a menu/service button after a redeploy."""
+    text = (update.effective_message.text or "").strip()
+    selected_language = None
+    action = None
+
+    # Identify the language and action from the text of the pressed reply-keyboard button.
+    for language, translations in T.items():
+        if text == translations["menu_services"]:
+            selected_language, action = language, show_services
+            break
+        if text == translations["estimate"]:
+            selected_language, action = language, choose_estimate
+            break
+        if text == translations["request"]:
+            selected_language, action = language, start_request
+            break
+        if text == translations["call"]:
+            selected_language, action = language, call_us
+            break
+        if text == translations["change_lang"]:
+            selected_language, action = language, change_language
+            break
+        if text in translations["service_names"]:
+            selected_language, action = language, choose_service
+            break
+
+    if selected_language:
+        context.user_data["lang"] = selected_language
+        track_user(update.effective_user, selected_language)
+        return await action(update, context)
+
+    # For any other text sent while no conversation is active, restore the saved language
+    # and show the main menu rather than silently ignoring the user.
+    if "lang" not in context.user_data:
+        saved_language = get_stored_language(update.effective_user.id if update.effective_user else None)
+        context.user_data["lang"] = saved_language or "hy"
+    await update.effective_message.reply_text(
+        tr(context, "unknown"),
+        reply_markup=main_keyboard(context)
+    )
+    return MENU
+
+
 def is_bot_admin(update: Update) -> bool:
     """Only allow the configured owner account to view tracked users."""
     if not OWNER_CHAT_ID:
@@ -442,6 +502,9 @@ async def show_services(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_service_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if "lang" not in context.user_data:
+        saved_language = get_stored_language(update.effective_user.id if update.effective_user else None)
+        context.user_data["lang"] = saved_language or "hy"
     await query.answer()
     action = query.data.split(":", 1)[1] if query.data and ":" in query.data else ""
     t = T[lang(context)]
@@ -692,7 +755,11 @@ def main():
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("users", users_command))
     conversation = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+        entry_points=[
+            CommandHandler("start", start),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, resume_entry),
+            CallbackQueryHandler(show_service_details, pattern=r"^svc:(regular|deep|post|steam|dry|ironing|main)$"),
+        ],
         states={
             LANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, choose_language)],
             MENU: [
