@@ -1,6 +1,9 @@
 import os
 import re
 import logging
+import json
+import asyncio
+import urllib.request
 
 from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
@@ -12,6 +15,8 @@ from telegram.ext import (
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID", "").strip()
+GOOGLE_SHEETS_URL = os.getenv("GOOGLE_SHEETS_URL", "").strip()
+GOOGLE_SHEETS_SECRET = os.getenv("GOOGLE_SHEETS_SECRET", "").strip()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -522,6 +527,53 @@ async def enter_contact_time(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data["contact_time"] = text
     return await finish_lead(update, context)
 
+async def save_lead_to_google_sheets(data, user, visible_service, language):
+    """Send a completed customer request to the Google Apps Script web app."""
+    if not GOOGLE_SHEETS_URL or not GOOGLE_SHEETS_SECRET:
+        logger.warning("Google Sheets is not configured; request was not written to the spreadsheet.")
+        return False, "Google Sheets URL/secret is not configured"
+
+    telegram_id = user.id if user else "unknown"
+    telegram_username = f"@{user.username}" if user and user.username else "not available"
+    payload = {
+        "key": GOOGLE_SHEETS_SECRET,
+        "name": data.get("name", ""),
+        "phone": data.get("phone", ""),
+        "language": language,
+        "service": visible_service,
+        "area_hours": data.get("area", ""),
+        "extras": "",
+        "address": data.get("address", ""),
+        "contact_time": data.get("contact_time", ""),
+        "estimated_price": data.get("estimate", ""),
+        "notes": f"Telegram username: {telegram_username}; Telegram ID: {telegram_id}",
+    }
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        GOOGLE_SHEETS_URL,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    def _post():
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return response.read().decode("utf-8", errors="replace")
+
+    try:
+        response_text = await asyncio.to_thread(_post)
+        result = json.loads(response_text)
+        if not result.get("success"):
+            error = result.get("error", "Unknown Google Apps Script error")
+            logger.error("Google Sheets rejected the lead: %s", error)
+            return False, error
+        logger.info("Lead saved to Google Sheets; request ID: %s", result.get("request_id"))
+        return True, result.get("request_id", "")
+    except Exception as exc:
+        logger.exception("Could not save lead to Google Sheets")
+        return False, str(exc)
+
+
 async def finish_lead(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data
     user = update.effective_user
@@ -530,6 +582,12 @@ async def finish_lead(update: Update, context: ContextTypes.DEFAULT_TYPE):
     visible_service = service_name(context, sid) if sid in SERVICE_IDS else "—"
     price = money(data["estimate"], context) if data.get("estimate") is not None else "—"
     username = f"@{user.username}" if user and user.username else "չկա"
+
+    # Save the request to Google Sheets before notifying the owner.
+    sheets_ok, sheets_info = await save_lead_to_google_sheets(
+        data, user, visible_service, lang(context)
+    )
+
     # Keep the owner notification in the compact, emoji-labeled format used previously.
     lead = (
         f"{t['admin_title']}\n\n"
@@ -543,6 +601,11 @@ async def finish_lead(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💬 Telegram՝ {username}\n"
         f"🆔 Telegram ID՝ {user.id if user else '—'}"
     )
+    if not sheets_ok:
+        lead += (
+            "\\n\\n⚠️ Google Sheets save failed. Please record this request manually."
+            f"\\nReason: {sheets_info[:300]}"
+        )
     if OWNER_CHAT_ID:
         try:
             await context.bot.send_message(chat_id=OWNER_CHAT_ID, text=lead)
