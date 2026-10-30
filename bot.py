@@ -6,7 +6,7 @@ import asyncio
 import urllib.request
 
 from dotenv import load_dotenv
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, ConversationHandler,
     ContextTypes, filters, CallbackQueryHandler,
@@ -221,23 +221,6 @@ SERVICE_PRICES = {
     "post": ("post", 800, 32000),
 }
 
-# Dry-cleaning items. Packages are selectable as separate bundled options.
-DRY_ITEMS = {
-    "sofa2": ("Two-seat sofa", "Երկտեղանի բազմոց", "Двухместный диван", 8000),
-    "sofa3": ("Three-seat sofa", "Եռատեղանի բազմոց", "Трёхместный диван", 10000),
-    "corner": ("Corner sofa", "Անկյունային բազմոց", "Угловой диван", 15000),
-    "armchair": ("Armchair", "Բազկաթոռ", "Кресло", 2500),
-    "softchair": ("Upholstered chair", "Փափուկ աթոռ", "Мягкий стул", 2000),
-    "woodchair": ("Wooden chair", "Փայտե աթոռ", "Деревянный стул", 1000),
-    "singlemattress": ("Single mattress", "Մեկտեղանի ներքնակ", "Односпальный матрас", 8000),
-    "doublemattress": ("Double mattress", "Երկտեղանի ներքնակ", "Двуспальный матрас", 12000),
-    "childmattress": ("Child mattress", "Մանկական ներքնակ", "Детский матрас", 6000),
-    "pack2": ("2-seat sofa + 2 armchairs (package)", "Երկտեղանի բազմոց + 2 բազկաթոռ (փաթեթ)", "Двухместный диван + 2 кресла (комплект)", 10000),
-    "pack3": ("3-seat sofa + 2 armchairs (package)", "Եռատեղանի բազմոց + 2 բազկաթոռ (փաթեթ)", "Трёхместный диван + 2 кресла (комплект)", 12000),
-}
-
-DRY_LABEL_INDEX = {"en": 0, "hy": 1, "ru": 2}
-
 
 def lang(context):
     return context.user_data.get("lang", "hy")
@@ -319,6 +302,84 @@ def calc(sid, area=None, hours=None):
         return hours * 4000
     return None
 
+DRY_PRODUCTS = [
+    {"id":"sofa_2", "price":8000, "image":"sofa_2.jpg", "name":{"hy":"Երկտեղանի բազմոց", "ru":"Двухместный диван", "en":"Two-seat sofa"}},
+    {"id":"sofa_3", "price":10000, "image":"sofa_3.jpg", "name":{"hy":"Եռատեղանի բազմոց", "ru":"Трёхместный диван", "en":"Three-seat sofa"}},
+    {"id":"sofa_corner", "price":15000, "image":"sofa_corner.jpg", "name":{"hy":"Անկյունային բազմոց", "ru":"Угловой диван", "en":"Corner sofa"}},
+    {"id":"armchair", "price":2500, "image":"armchair.jpg", "name":{"hy":"Բազկաթոռ", "ru":"Кресло", "en":"Armchair"}},
+    {"id":"chair_soft", "price":2000, "image":"chair_soft.jpg", "name":{"hy":"Փափուկ աթոռ", "ru":"Мягкий стул", "en":"Upholstered chair"}},
+    {"id":"chair_wood", "price":1000, "image":"chair_wood.jpg", "name":{"hy":"Փայտե աթոռ", "ru":"Деревянный стул", "en":"Wooden chair"}},
+    {"id":"mattress_single", "price":8000, "image":"mattress_single.jpg", "name":{"hy":"Մեկտեղանի ներքնակ", "ru":"Односпальный матрас", "en":"Single mattress"}},
+    {"id":"mattress_double", "price":12000, "image":"mattress_double.jpg", "name":{"hy":"Երկտեղանի ներքնակ", "ru":"Двуспальный матрас", "en":"Double mattress"}},
+    {"id":"mattress_child", "price":6000, "image":"mattress_child.jpg", "name":{"hy":"Մանկական ներքնակ", "ru":"Детский матрас", "en":"Children’s mattress"}},
+    {"id":"pack_2", "price":10000, "image":"sofa_2.jpg", "name":{"hy":"Երկտեղանի բազմոց + 2 բազկաթոռ (փաթեթ)", "ru":"Двухместный диван + 2 кресла (комплект)", "en":"Two-seat sofa + 2 armchairs (package)"}},
+    {"id":"pack_3", "price":12000, "image":"sofa_3.jpg", "name":{"hy":"Եռատեղանի բազմոց + 2 բազկաթոռ (փաթեթ)", "ru":"Трёхместный диван + 2 кресла (комплект)", "en":"Three-seat sofa + 2 armchairs (package)"}},
+]
+DRY_UI = {
+ "hy":{"count":"Քանակը", "total":"Ընթացիկ ընդհանուր արժեք", "next":"Հաջորդը ➡️", "prev":"⬅️ Նախորդը", "done":"✅ Հաստատել ընտրությունը", "empty":"Նշեք առնվազն մեկ իր՝ շարունակելու համար։", "summary":"🛋 Քիմմաքրման ընտրության ամփոփում", "intro":"Ընտրեք կահույքը կամ ներքնակը։ Օգտագործեք − / + կոճակները, իսկ փաթեթները կարող եք ընտրել առանձին։", "saved":"Ընտրությունը պահպանվեց։ Կարող եք ուղարկել հայտը՝ վերջնական գինը ճշտելու համար։"},
+ "ru":{"count":"Количество", "total":"Текущая сумма", "next":"Далее ➡️", "prev":"⬅️ Назад", "done":"✅ Подтвердить выбор", "empty":"Выберите хотя бы один предмет, чтобы продолжить.", "summary":"🛋 Сводка выбранной химчистки", "intro":"Выберите мебель или матрас. Используйте − / + для изменения количества; комплекты также доступны отдельно.", "saved":"Выбор сохранён. Оставьте заявку, чтобы уточнить окончательную стоимость."},
+ "en":{"count":"Quantity", "total":"Current total", "next":"Next ➡️", "prev":"⬅️ Previous", "done":"✅ Confirm selection", "empty":"Select at least one item to continue.", "summary":"🛋 Dry-cleaning selection summary", "intro":"Choose furniture or mattresses. Use − / + to change quantities; packages are available as separate options.", "saved":"Your selection is saved. Submit a request to confirm the final price."}
+}
+
+def dry_total(context):
+    counts=context.user_data.get("dry_counts", {})
+    return sum(p["price"]*counts.get(p["id"],0) for p in DRY_PRODUCTS)
+
+def dry_caption(context, idx):
+    p=DRY_PRODUCTS[idx]; language=lang(context); ui=DRY_UI[language]
+    count=context.user_data.get("dry_counts",{}).get(p["id"],0)
+    return f"{p['name'][language]}\n{money(p['price'], context)}\n{ui['count']}: {count}\n\n{ui['total']}: {money(dry_total(context), context)}\n\n{ui['intro']}"
+
+def dry_keyboard(context, idx):
+    ui=DRY_UI[lang(context)]; p=DRY_PRODUCTS[idx]
+    count=context.user_data.get("dry_counts",{}).get(p["id"],0)
+    rows=[[InlineKeyboardButton("−",callback_data=f"dry:minus:{p['id']}"), InlineKeyboardButton(str(count),callback_data="dry:noop"), InlineKeyboardButton("+",callback_data=f"dry:plus:{p['id']}")]]
+    nav=[]
+    if idx>0: nav.append(InlineKeyboardButton(ui["prev"],callback_data="dry:prev"))
+    if idx<len(DRY_PRODUCTS)-1: nav.append(InlineKeyboardButton(ui["next"],callback_data="dry:next"))
+    if nav: rows.append(nav)
+    rows.append([InlineKeyboardButton(ui["done"],callback_data="dry:done")])
+    return InlineKeyboardMarkup(rows)
+
+async def show_dry_item(message, context, idx=None, edit=False):
+    if idx is None: idx=context.user_data.get("dry_index",0)
+    idx=max(0,min(idx,len(DRY_PRODUCTS)-1)); context.user_data["dry_index"]=idx
+    p=DRY_PRODUCTS[idx]; path=Path(__file__).resolve().parent/'assets'/'dry_items'/p['image']
+    caption=dry_caption(context,idx); keyboard=dry_keyboard(context,idx)
+    if edit:
+        with path.open('rb') as photo:
+            await message.edit_media(media=InputMediaPhoto(media=photo,caption=caption),reply_markup=keyboard)
+    else:
+        with path.open('rb') as photo:
+            await message.reply_photo(photo=photo,caption=caption,reply_markup=keyboard)
+
+async def dry_selection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query=update.callback_query; await query.answer()
+    parts=query.data.split(":")
+    action=parts[1] if len(parts)>1 else ""
+    if action=="noop": return
+    idx=context.user_data.get("dry_index",0)
+    if action in ("plus","minus") and len(parts)>2:
+        pid=parts[2]; counts=context.user_data.setdefault("dry_counts",{})
+        counts[pid]=max(0,counts.get(pid,0)+(1 if action=="plus" else -1))
+        if counts[pid]==0: counts.pop(pid,None)
+        await show_dry_item(query.message,context,idx,edit=True); return
+    if action=="next": await show_dry_item(query.message,context,idx+1,edit=True); return
+    if action=="prev": await show_dry_item(query.message,context,idx-1,edit=True); return
+    if action=="done":
+        counts=context.user_data.get("dry_counts",{}); total=dry_total(context); ui=DRY_UI[lang(context)]
+        if total<=0:
+            await query.answer(ui["empty"],show_alert=True); return
+        lines=[ui["summary"]]
+        for p in DRY_PRODUCTS:
+            n=counts.get(p["id"],0)
+            if n: lines.append(f"• {p['name'][lang(context)]} × {n} — {money(p['price']*n,context)}")
+        lines.append(f"\n{ui['total']}: {money(total,context)}")
+        lines.append("\n"+ui["saved"])
+        context.user_data["service"]="dry"; context.user_data["estimate"]=total
+        context.user_data["area"]="; ".join(f"{p['name'][lang(context)]} × {counts[p['id']]}" for p in DRY_PRODUCTS if counts.get(p['id'],0))
+        await query.message.reply_text("\n".join(lines),reply_markup=result_keyboard(context)); return
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     await update.effective_message.reply_text("Welcome / Բարի գալուստ / Добро пожаловать 💚\n\n" + LANGS["hy"]["welcome"], reply_markup=language_keyboard())
@@ -367,7 +428,11 @@ async def show_service_details(update: Update, context: ContextTypes.DEFAULT_TYP
     detail = SERVICE_DETAILS[lang(context)][sid]
     extras_key = SERVICE_EXTRAS_KEY.get(sid)
     if sid == "dry":
-        detail += "\n\n" + tr(context, "extras_dry") + "\n\n" + tr(context, "dry_more")
+        await query.message.reply_text(detail + "\n\n" + DRY_UI[lang(context)]["intro"])
+        context.user_data["dry_counts"] = {}
+        context.user_data["dry_index"] = 0
+        await show_dry_item(query.message, context, 0)
+        return SERVICE_INFO
     elif sid == "ironing":
         detail += "\n\n" + tr(context, "extras_ironing")
     elif extras_key:
@@ -379,89 +444,6 @@ async def show_service_details(update: Update, context: ContextTypes.DEFAULT_TYP
     }[lang(context)]
     await query.message.reply_text(detail + prompt, reply_markup=services_browser_keyboard(context))
     return SERVICE_INFO
-
-def dry_item_label(context, key):
-    item = DRY_ITEMS[key]
-    label = item[DRY_LABEL_INDEX[lang(context)]]
-    return f"{label} — {money(item[3], context)}"
-
-def dry_keyboard(context):
-    items = context.user_data.setdefault("dry_items", {})
-    rows = []
-    for key, item in DRY_ITEMS.items():
-        qty = items.get(key, 0)
-        label = item[DRY_LABEL_INDEX[lang(context)]]
-        rows.append([
-            InlineKeyboardButton("−", callback_data=f"dry:dec:{key}"),
-            InlineKeyboardButton(f"{'✅ ' if qty else ''}{label} ({money(item[3], context)}) ×{qty}", callback_data=f"dry:toggle:{key}"),
-            InlineKeyboardButton("+", callback_data=f"dry:inc:{key}"),
-        ])
-    if lang(context) == "hy":
-        rows.append([InlineKeyboardButton("🧮 Հաշվել արժեքը", callback_data="dry:calculate")])
-        rows.append([InlineKeyboardButton("🗑 Մաքրել ընտրությունը", callback_data="dry:clear")])
-    elif lang(context) == "ru":
-        rows.append([InlineKeyboardButton("🧮 Рассчитать стоимость", callback_data="dry:calculate")])
-        rows.append([InlineKeyboardButton("🗑 Очистить выбор", callback_data="dry:clear")])
-    else:
-        rows.append([InlineKeyboardButton("🧮 Calculate price", callback_data="dry:calculate")])
-        rows.append([InlineKeyboardButton("🗑 Clear selection", callback_data="dry:clear")])
-    return InlineKeyboardMarkup(rows)
-
-async def dry_calculator_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data.split(":")
-    items = context.user_data.setdefault("dry_items", {})
-    if data[1] in ("toggle", "inc", "dec") and len(data) == 3:
-        key = data[2]
-        if key in DRY_ITEMS:
-            # Bundles replace their equivalent sofa/chair selections to prevent double-charging.
-            equivalents = {"pack2": ["sofa2", "armchair"], "pack3": ["sofa3", "armchair"]}
-            if data[1] == "toggle":
-                target_qty = 0 if items.get(key, 0) else 1
-            elif data[1] == "inc":
-                target_qty = items.get(key, 0) + 1
-            else:
-                target_qty = max(0, items.get(key, 0) - 1)
-            if target_qty > 0:
-                if key in equivalents:
-                    for other in equivalents[key]:
-                        items.pop(other, None)
-                elif key in ("sofa2", "sofa3", "armchair"):
-                    for package, members in equivalents.items():
-                        if key in members:
-                            items.pop(package, None)
-                items[key] = target_qty
-            else:
-                items.pop(key, None)
-    elif data[1] == "clear":
-        items.clear()
-    elif data[1] == "calculate":
-        total = sum(DRY_ITEMS[key][3] * qty for key, qty in items.items())
-        if total <= 0:
-            prompts = {"hy": "Ընտրեք առնվազն մեկ իր՝ արժեքը հաշվարկելու համար։", "ru": "Выберите хотя бы один предмет для расчёта.", "en": "Select at least one item to calculate the price."}
-            await query.message.reply_text(prompts[lang(context)], reply_markup=dry_keyboard(context))
-            return MENU
-        summary = []
-        for key, qty in items.items():
-            summary.append(f"• {DRY_ITEMS[key][DRY_LABEL_INDEX[lang(context)]]} × {qty} — {money(DRY_ITEMS[key][3] * qty, context)}")
-        context.user_data["service"] = "dry"
-        context.user_data["estimate"] = total
-        context.user_data["area"] = "; ".join(f"{DRY_ITEMS[k][DRY_LABEL_INDEX[lang(context)]]} ×{q}" for k, q in items.items())
-        headings = {"hy": "🛋 Քիմմաքրման նախնական հաշվարկ", "ru": "🛋 Предварительный расчёт химчистки", "en": "🛋 Dry-cleaning estimate"}
-        footer = {
-            "hy": "\n\n📌 Սա նախնական հաշվարկ է։ Տեխնիկայի առաքման վճարը կախված է հասցեից։",
-            "ru": "\n\n📌 Это предварительный расчёт. Стоимость доставки оборудования зависит от адреса.",
-            "en": "\n\n📌 This is a preliminary estimate. Equipment delivery fee depends on the address.",
-        }
-        await query.message.reply_text(
-            headings[lang(context)] + "\n\n" + "\n".join(summary)
-            + f"\n\n💰 {money(total, context)}" + footer[lang(context)],
-            reply_markup=result_keyboard(context),
-        )
-        return MENU
-    await query.edit_message_reply_markup(reply_markup=dry_keyboard(context))
-    return MENU
 
 async def choose_estimate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["flow"] = "estimate"
@@ -496,9 +478,9 @@ async def choose_service(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(tr(context, "name_prompt"), reply_markup=step_keyboard(context))
         return NAME
     if sid == "dry":
-        context.user_data["dry_items"] = {}
-        prompts = {"hy": "Ընտրեք քիմմաքրման ենթակա իրերը։ Կարող եք ընտրել մի քանի տարբերակ։ Փաթեթ ընտրելիս նույն իրերը առանձին մի ընտրեք։", "ru": "Выберите предметы для химчистки. Можно выбрать несколько вариантов. При выборе комплекта не выбирайте те же предметы отдельно.", "en": "Select the items for dry cleaning. You can select multiple items. If you choose a package, do not select the same items separately."}
-        await update.effective_message.reply_text(prompts[lang(context)], reply_markup=dry_keyboard(context))
+        context.user_data["dry_counts"] = {}
+        context.user_data["dry_index"] = 0
+        await show_dry_item(update.effective_message, context, 0)
         return MENU
     if sid == "ironing":
         await update.effective_message.reply_text(tr(context, "ironing_prompt"), reply_markup=hours_keyboard(context))
@@ -1071,7 +1053,6 @@ def main():
         states={
             LANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, choose_language)],
             MENU: [
-                CallbackQueryHandler(dry_calculator_callback, pattern=r"^dry:(?:(?:toggle|inc|dec):[a-z0-9]+|calculate|clear)$"),
                 MessageHandler(filters.Regex(r"^(🧹 Մեր ծառայությունները|🧹 Наши услуги|🧹 Our services)$"), show_services),
                 MessageHandler(filters.Regex(r"^(💰 Մոտավոր հաշվարկել|💰 Рассчитать стоимость|💰 Estimate the price)$"), choose_estimate),
                 MessageHandler(filters.Regex(r"^(📝 Ուղարկել հայտ|📝 Оставить заявку|📝 Submit a request)$"), start_request),
@@ -1092,6 +1073,7 @@ def main():
         allow_reentry=True,
     )
     app.add_handler(conversation)
+    app.add_handler(CallbackQueryHandler(dry_selection_callback, pattern=r"^dry:"))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("orders", orders_command))
     app.add_handler(CallbackQueryHandler(order_filter_callback, pattern=r"^orderfilter:"))
