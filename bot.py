@@ -372,6 +372,7 @@ async def choose_estimate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     t = T[lang(context)]
+    context.user_data["request_step"] = "service"
     if context.user_data.get("service") and context.user_data.get("estimate") is not None:
         context.user_data["flow"] = "request"
         await update.effective_message.reply_text(tr(context, "request_from_calc", service=service_name(context, context.user_data["service"]), price=money(context.user_data["estimate"], context)), reply_markup=step_keyboard(context))
@@ -391,6 +392,7 @@ async def choose_service(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SERVICE
     context.user_data["service"] = sid
     if context.user_data.get("flow") == "request":
+        context.user_data["request_step"] = "name"
         await update.effective_message.reply_text(tr(context, "name_prompt"), reply_markup=step_keyboard(context))
         return NAME
     if sid == "dry":
@@ -463,6 +465,7 @@ async def enter_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(tr(context, "bad_name"), reply_markup=step_keyboard(context))
         return NAME
     context.user_data["name"] = text
+    context.user_data["request_step"] = "phone"
     await update.effective_message.reply_text(tr(context, "phone_prompt"), reply_markup=phone_keyboard(context))
     return PHONE
 
@@ -482,6 +485,7 @@ async def enter_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(tr(context, "bad_phone"), reply_markup=phone_keyboard(context))
         return PHONE
     context.user_data["phone"] = normalized
+    context.user_data["request_step"] = "address"
     await update.effective_message.reply_text(tr(context, "address_prompt"), reply_markup=step_keyboard(context))
     return ADDRESS
 
@@ -491,6 +495,7 @@ async def receive_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(tr(context, "contact_error"), reply_markup=phone_keyboard(context))
         return PHONE
     context.user_data["phone"] = contact.phone_number
+    context.user_data["request_step"] = "address"
     await update.effective_message.reply_text(tr(context, "address_prompt"), reply_markup=step_keyboard(context))
     return ADDRESS
 
@@ -506,6 +511,7 @@ async def enter_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(tr(context, "bad_address"), reply_markup=step_keyboard(context))
         return ADDRESS
     context.user_data["address"] = text
+    context.user_data["request_step"] = "contact_time"
     await update.effective_message.reply_text(tr(context, "time_prompt"), reply_markup=time_keyboard(context))
     return CONTACT_TIME
 
@@ -576,6 +582,7 @@ async def save_lead_to_google_sheets(data, user, visible_service, language):
 
 async def finish_lead(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data
+    data["request_step"] = "submitting"
     user = update.effective_user
     t = T[lang(context)]
     sid = data.get("service")
@@ -626,10 +633,23 @@ async def call_us(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def resume_after_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Re-enter the conversation when a user presses an existing reply-keyboard button
-    after a redeploy has cleared ConversationHandler's in-memory state.
+    Recover recognized keyboard replies and continue a partially completed request
+    if ConversationHandler's state is unexpectedly missing.
     """
     text = (update.effective_message.text or "").strip()
+
+    # If the user is in the middle of a request, route the reply to that step first.
+    # This prevents name/address/time replies from falling into the generic menu handler.
+    step = context.user_data.get("request_step")
+    t = T[lang(context)]
+    if step == "name" and text not in (t["main"], t["back"]):
+        return await enter_name(update, context)
+    if step == "phone" and text not in (t["main"], t["back"]):
+        return await enter_phone(update, context)
+    if step == "address" and text not in (t["main"], t["back"]):
+        return await enter_address(update, context)
+    if step == "contact_time" and text not in (t["main"], t["back"]):
+        return await enter_contact_time(update, context)
 
     # Infer the language from the button the user actually pressed.
     selected_language = None
@@ -686,6 +706,18 @@ async def resume_after_restart(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def unknown_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Recover if the conversation state was lost but this user's request step remains.
+    step = context.user_data.get("request_step")
+    if step == "name":
+        return await enter_name(update, context)
+    if step == "phone":
+        if update.effective_message.contact:
+            return await receive_contact(update, context)
+        return await enter_phone(update, context)
+    if step == "address":
+        return await enter_address(update, context)
+    if step == "contact_time":
+        return await enter_contact_time(update, context)
     await update.effective_message.reply_text(tr(context, "unknown"), reply_markup=main_keyboard(context))
     return MENU
 
