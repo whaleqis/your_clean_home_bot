@@ -498,22 +498,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def choose_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (update.effective_message.text or "").strip()
 
-    def normalize_button(value):
-        # Telegram/iOS can represent flag and emoji characters with invisible variation selectors.
-        return value.replace("\\ufe0f", "").replace("\\u200d", "").strip()
+    # Match the visible language name rather than the emoji/flag prefix.
+    # Telegram clients can send slightly different Unicode emoji sequences.
+    if "Հայերեն" in text:
+        selected = "hy"
+    elif "Русский" in text:
+        selected = "ru"
+    elif "English" in text:
+        selected = "en"
+    else:
+        selected = None
 
-    normalized_text = normalize_button(text)
-    selected = next(
-        (k for k, v in LANGS.items() if normalize_button(v["name"]) == normalized_text),
-        None,
-    )
     if not selected:
-        await update.effective_message.reply_text("Please choose a language / Խնդրում ենք ընտրել լեզուն / Пожалуйста, выберите язык.", reply_markup=language_keyboard())
+        await update.effective_message.reply_text(
+            "Խնդրում ենք ընտրել լեզուն / Пожалуйста, выберите язык / Please choose a language.",
+            reply_markup=language_keyboard(),
+        )
         return LANG
+
     context.user_data.clear()
     context.user_data["lang"] = selected
     track_user(update.effective_user, selected)
-    await update.effective_message.reply_text(tr(context, "welcome"), reply_markup=main_keyboard(context))
+    await update.effective_message.reply_text(
+        tr(context, "welcome"),
+        reply_markup=main_keyboard(context),
+    )
     return MENU
 
 async def change_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
