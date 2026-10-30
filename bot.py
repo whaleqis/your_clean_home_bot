@@ -718,7 +718,7 @@ async def send_orders(message, context, status_filter="All", callback_query=None
         )
     if not orders:
         lines.append("No orders found for this status.")
-    text = "\n\n".join(lines)
+    text = "\n".join(lines)
     if callback_query:
         await callback_query.answer()
         try:
